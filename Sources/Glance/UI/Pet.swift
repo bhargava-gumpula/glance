@@ -54,18 +54,22 @@ final class PetController {
     /// Fly next to `rect` (Cocoa screen coordinates, origin bottom-left) and point at it.
     /// `ring` draws Pip's own dashed box around it; the PointTool selection already has one.
     func point(at rect: CGRect, ring showRing: Bool = true) {
-        let screen = NSScreen.screens.first { $0.frame.contains(CGPoint(x: rect.midX, y: rect.midY)) } ?? NSScreen.main
-        guard let vf = screen?.visibleFrame else { return }
-        let s = Self.sprite, w = Self.size
-        let left = rect.maxX + 8 + s.width <= vf.maxX // room on the right: sit there, point left
-        model.pointLeft = left
+        let p = PetGeometry.placement(for: rect, screens: NSScreen.screens.map(\.visibleFrame),
+                                      window: Self.size, sprite: Self.sprite, gap: 8)
+        model.pointLeft = p.pointLeft
         model.pointing = true
-        var x = left ? rect.maxX + 8 + s.width - w.width : rect.minX - 8 - s.width
-        var y = rect.midY - s.height / 2
-        x = min(max(x, vf.minX), vf.maxX - w.width)
-        y = min(max(y, vf.minY), vf.maxY - w.height)
-        fly(to: NSPoint(x: x, y: y))
+        fly(to: p.origin)
         if showRing { ring.show(around: rect) } else { ring.hide() }
+    }
+
+    /// `rect` in AX/CG global coordinates (origin top-left of the primary screen).
+    func point(atAX rect: CGRect, ring showRing: Bool = true) {
+        point(at: PetGeometry.cocoaRect(fromAX: rect, primaryHeight: NSScreen.screens.first?.frame.height ?? 0), ring: showRing)
+    }
+
+    /// `rect` is a Vision normalized rect inside `region`, the captured area in Cocoa global points.
+    func point(atVision rect: CGRect, in region: CGRect, ring showRing: Bool = true) {
+        point(at: PetGeometry.cocoaRect(fromVision: rect, in: region), ring: showRing)
     }
 
     /// Show `text` in Pip's bubble (until the next `home()` or new answer is dismissed).
@@ -143,7 +147,7 @@ private struct PetView: View {
         VStack(alignment: model.pointLeft ? .trailing : .leading, spacing: 6) {
             Spacer(minLength: 0)
             if let bubble {
-                PetBubbleView(text: bubble) { model.dismissed = lastReply?.id; model.said = nil }
+                PetBubbleView(text: bubble, tailOnRight: model.pointLeft) { model.dismissed = lastReply?.id; model.said = nil }
             }
             PipSpriteView(state: state, pointLeft: model.pointLeft)
             .frame(width: PetController.sprite.width, height: PetController.sprite.height)

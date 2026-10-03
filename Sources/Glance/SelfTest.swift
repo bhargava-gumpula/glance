@@ -222,13 +222,9 @@ enum SelfTest {
               "sentences: splits on end marks and newlines, not decimals")
         check(Voice.speakable("**16 GB** is `enough`") == "16 GB is enough", "speakable: markdown dropped")
 
-        // Pip sprite: every state stays 20×14 and uses only palette colours; pointing mirrors by side.
-        let states: [PetState] = [.idle, .listening, .thinking, .talking, .pointing]
-        let grids = states.flatMap { st in (0..<14).flatMap { t in [true, false].map { PipSprite.grid(st, tick: t, pointLeft: $0) } } }
-        check(grids.allSatisfy { $0.count == PipSprite.height && $0.allSatisfy { $0.count == PipSprite.width } }, "Pip: every frame is 20×14")
-        check(grids.allSatisfy { $0.allSatisfy { $0.allSatisfy { $0 == "." || PipSprite.palette[$0] != nil } } }, "Pip: only palette colours")
-        check(PipSprite.grid(.pointing, tick: 1, pointLeft: true).map { String($0.reversed()) }
-              == PipSprite.grid(.pointing, tick: 1, pointLeft: false).map { String($0) }, "Pip: pointing right mirrors pointing left")
+        PipSprite.selfTest(check)
+        PetGeometry.selfTest(check)
+        PetBubbleView.selfTest(check)
         print(failures == 0 ? "selftest: all passed" : "selftest: \(failures) failed")
         exit(failures == 0 ? 0 : 1)
     }
