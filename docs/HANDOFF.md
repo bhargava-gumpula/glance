@@ -86,7 +86,7 @@ Built so far:
 - [ ] Owner: Wi-Fi off → hold ⌥Space → question shows "(on-device)" (macOS asks for Speech Recognition the first time); the answer then needs a provider that works offline, or shows the network error as text
 
 ### Phase 2 gotchas
-- Xcode is now installed but its license isn't accepted, so `swift build` fails with the default developer dir. Owner: `sudo xcodebuild -license accept`. Until then: `DEVELOPER_DIR=/Library/Developer/CommandLineTools ./scripts/build-app.sh`.
+- Xcode is installed and its license accepted (2026-10-03); `swift build` uses it. SwiftUI macros may now compile, but the code still uses the ObservableObject pattern.
 - Recording starts on every key-down, so a quick tap shows the orange mic dot for a moment.
 - The default voice ID is the premade "Rachel"; if the account doesn't have it, TTS fails silently (log shows HTTP 4xx). Paste another voice ID in Settings.
 - `pcm_24000` on the free tier is UNVERIFIED; if TTS gets HTTP 4xx, try `pcm_22050` (change `PCMPlayer.sampleRate` too).
