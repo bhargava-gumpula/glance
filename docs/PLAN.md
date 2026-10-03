@@ -111,6 +111,7 @@ glance/
 ### Phase 5 — Guide v1: one highlighted step (≈1 h)
 - *"Show me how to export this as a PDF."* → the model names the next control → Glance finds it via its Accessibility element or OCR text match → draws a ring and arrow on it, with a one-line instruction (also spoken).
 - When you click and ask "next", it takes a fresh screenshot and highlights the following step.
+- **Full-screen send (needed since commit 17ebe21):** Phase 1 sends only the selected box, never the rest of the screen. Guide has to see the whole screen to find the next control, so it gets its own explicit path: the user starts Guide → Glance shows a "Guide will send your whole screen (redacted)" preview → the user confirms → the full screen goes through `ContextPacket.send()` with the same exclusions, redaction and blackout. Explain stays selection-only. Excluded apps are still masked out of the full-screen capture.
 
 **Gate:** the chosen export flow is guided correctly, step by step, 3 times in a row.
 **→ Record backup video #2** (shopping + Guide).
