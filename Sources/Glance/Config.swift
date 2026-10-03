@@ -99,3 +99,23 @@ enum Config {
 /// Timing and fallback notes, readable with `log stream --predicate 'subsystem == "ie.dublinhacx.glance"'`.
 /// Never log keys, transcripts or screen text here.
 let log = Logger(subsystem: Config.bundleID, category: "glance")
+
+extension Config {
+    /// Audit A11: an API key is only sent to the host it was saved for. Returns the problem, or nil when fine.
+    /// `savedFor` is nil for keys saved before this check existed; those adopt the current host.
+    static func keyHostMismatch(savedFor: String?, baseURL: String) -> String? {
+        guard let savedFor, let host = URL(string: baseURL)?.host, host != savedFor else { return nil }
+        return "This API key was saved for \(savedFor), but the address now points to \(host). Re-enter the key in Settings to use it there."
+    }
+
+    /// Audit A12: the Address field must be an http(s) URL with a host (a pasted key is neither).
+    static func validBaseURL(_ s: String) -> Bool {
+        guard let url = URL(string: s), let scheme = url.scheme?.lowercased() else { return false }
+        return ["http", "https"].contains(scheme) && !(url.host ?? "").isEmpty
+    }
+
+    /// ElevenLabs voice IDs are short and alphanumeric; a key pasted there would be sent in the URL path.
+    static func validVoiceID(_ s: String) -> Bool {
+        !s.hasPrefix("sk_") && (1...32).contains(s.count) && s.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) }
+    }
+}

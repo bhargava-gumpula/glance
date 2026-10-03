@@ -14,7 +14,7 @@ Phase 1 adds:
 
 ## After the Phase 1 gate (owner request, 2026-10-03)
 - Redaction widened (see DECISIONS.md "Redaction rules"). 80 selftest checks, including product-page lines that must stay untouched.
-- Override: if the question explicitly asks to see hidden data ("don't redact", "unredact", "show the hidden email", "it's okay to see my address"), `send()` uses the raw copy kept in memory. It stays on until the next selection, and the preview shows ⚠️ Not redacted. Excluded apps stay excluded.
+- Override: if the question explicitly asks to see hidden data ("don't redact", "unredact", "show the redacted email", "it's okay to see my address"), `send()` uses the raw copy kept in memory. It stays on until the next selection, and the preview shows ⚠️ Not redacted. Excluded apps stay excluded.
 - `testdata/product.html` has a fake "Account details" block for testing.
 - Known limits: single first names aren't caught (two-word names only, so day names like "Tue" aren't flagged); famous people's names are redacted too; addresses without a street-type word or Eircode are missed.
 

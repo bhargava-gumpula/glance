@@ -136,6 +136,8 @@ final class ChatModel: ObservableObject {
     private var history: [ChatMessage] = []
     /// Set once the user explicitly asks to see hidden data; lasts until the next selection.
     private var revealed = false
+    /// Provider name and image setting from the last "Sending to …" preview of this conversation (audit A2).
+    private var previewedFor: (String, Bool)?
     private var answering: Task<Void, Never>?
     private let recorder = Recorder()
     private let speaker = Speaker()
@@ -204,6 +206,7 @@ final class ChatModel: ObservableObject {
         turns = []
         history = []
         revealed = false
+        previewedFor = nil
         let center = NSPoint(x: rect.midX, y: rect.midY)
         let app = Exclusions.app(at: center)
         if Exclusions.isExcluded(app) {
@@ -261,7 +264,9 @@ final class ChatModel: ObservableObject {
             // and leave `revealed` and the history to whatever replaced this question.
             guard !Task.isCancelled else { return }
             let reveal = revealed || Redactor.userAskedToReveal(question)
-            let announce = history.isEmpty || (reveal && !revealed)
+            let target = (provider.name, provider.supportsImages)
+            let announce = history.isEmpty || (reveal && !revealed) || Self.needsPreview(first: previewedFor, now: target)
+            if announce { previewedFor = target }
             revealed = reveal
             let answer = ContextPacket.send(packet, history: history, question: question, reveal: reveal,
                                             announce: announce, mode: mode, provider: provider) { preview in
@@ -399,5 +404,14 @@ private struct TurnView: View {
     private func markdown(_ s: String) -> AttributedString {
         (try? AttributedString(markdown: s, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
             ?? AttributedString(s)
+    }
+}
+
+extension ChatModel {
+    /// Audit A2: show the "Sending to …" preview again when the provider or its image setting differs from
+    /// what the conversation's first preview said.
+    nonisolated static func needsPreview(first: (String, Bool)?, now: (String, Bool)) -> Bool {
+        guard let first else { return true }
+        return first != now
     }
 }

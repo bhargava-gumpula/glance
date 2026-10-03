@@ -23,7 +23,7 @@ Each open decision has a working default and exactly one place to change it.
 | Never-captured apps | Keychain, System Settings, Passwords, 1Password, Bitwarden | `Config.excludedApps` |
 | Never-captured sites | set in Phase 3 | URL blocklist (Phase 3) |
 | Redaction rules | Cards (Luhn), IBAN (mod-97), PPSN (check letter), SSN, emails, phones, street addresses + Eircodes + labelled addresses, crypto wallets (ETH, BTC, base58) and private keys/seed phrases, API keys/JWTs/bearer tokens/passwords, labelled account/brokerage/ID numbers and 2FA codes, usernames/@handles//Users paths, dates of birth, names (labelled, or two-word names found by Apple's NaturalLanguage tagger), IP addresses. Matching OCR lines are blacked out in images | `Privacy/Redactor.swift` |
-| Redaction override | Only when the question explicitly asks ("don't redact", "unredact", "show the hidden …", "it's okay to see …"); lasts until the next selection and the preview says so. Excluded apps are never captured either way | `Redactor.userAskedToReveal` |
+| Redaction override | Only when the question explicitly asks ("don't redact", "unredact", "show the redacted …", "it's okay to see …"; never everyday words like "hidden files" or "unhide", audit A1); lasts until the next selection and the preview says so. Excluded apps are never captured either way | `Redactor.userAskedToReveal` |
 | "Do" actions | save comparison only | `Modes/Do.swift` (Phase 7) |
 | Visual style | system default | `UI/` (Phase 8) |
 | Demo sites and Guide app | Safari product pages; export-to-PDF flow | docs/PLAN.md, Demo |

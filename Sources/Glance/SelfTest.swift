@@ -136,7 +136,7 @@ enum SelfTest {
         for line in safe { check(red(line) == line, "no false hit: \(line.prefix(45))…  →  \(red(line))") }
 
         // Reveal override: only explicit requests
-        for q in ["Don't redact it, what's my card number?", "You can show the hidden email", "unredact this",
+        for q in ["Don't redact it, what's my card number?", "You can show the redacted email", "unredact this",
                   "It's okay to see my address", "read the redacted account number"] {
             check(Redactor.userAskedToReveal(q), "reveal: \(q)")
         }
@@ -144,6 +144,54 @@ enum SelfTest {
                   "What's my card number?"] {
             check(!Redactor.userAskedToReveal(q), "no reveal: \(q)")
         }
+
+        // Audit 1 fixes (A1, A2, A4-A12); each failed before its fix
+        for q in ["How do I show hidden files in Finder?", "Can I see hidden columns in this sheet?", "How do I unhide this row?",
+                  "Tell me why this layer is hidden", "How do I stop hiding the Dock?", "How do I include hidden folders in the search?",
+                  "How do I unmask this field?"] {
+            check(!Redactor.userAskedToReveal(q), "A1 no reveal: \(q)")
+        }
+        check(Redactor.userAskedToReveal("show the redacted email") && Redactor.userAskedToReveal("please don't redact anything"),
+              "A1 explicit redaction requests still reveal")
+        check(ChatModel.needsPreview(first: nil, now: ("Claude", true))
+              && ChatModel.needsPreview(first: ("Local", true), now: ("OpenAI", true))
+              && ChatModel.needsPreview(first: ("DeepSeek", false), now: ("DeepSeek", true))
+              && !ChatModel.needsPreview(first: ("Claude", true), now: ("Claude", true)), "A2 new preview when provider or images change")
+        for line in ["Apple MacBook Air 13-inch M4, 16GB unified memory, 512GB SSD, Liquid Retina display, 18-hour battery life, €1,299",
+                     "MacBook Air 13-inch, Liquid Retina display, 16GB unified memory",
+                     "Liquid Retina XDR display, 18-hour battery life"] {
+            check(red(line) == line, "A4 product line kept: \(line.prefix(40))…  →  \(red(line))")
+        }
+        check(red("Reviewed by Aoife Kelly").contains("[NAME]"), "A4 real names still redacted")
+        for card in ["4242 4242 4242 4242 12/29 123", "4111 1111 1111 1111 123", "4111-1111-1111-1111 123"] {
+            check(red(card).hasPrefix("[CARD]") && !red(card).contains("4242 4242") && !red(card).contains("1111 1111"), "A5 card before expiry/CVC: \(red(card))")
+        }
+        let pwd = Redactor.redactLines(["Email", "aoife@example.ie", "Password", "•••••••••••", "Sign in"])
+        check(pwd[3].hits > 0 && pwd[3].text == "[SECRET]" && pwd[4].hits == 0, "A6 value under a bare Password label")
+        for otp in ["Your code is 482913", "482913 is your verification code", "G-482913 is your Google verification code.",
+                    "Enter code 482913", "Your WhatsApp code: 123-456"] {
+            check(!red(otp).contains("482913") && !red(otp).contains("123-456"), "A7 2FA: \(otp) → \(red(otp))")
+        }
+        check(red("Use code 4 for the 4-pin connector") == "Use code 4 for the 4-pin connector", "A7 short numbers kept")
+        for env in ["OPENAI_API_KEY=abc123def456ghi789jkl012mno", "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+                    "secret_key = abcdefghijklmnop1234", "STRIPE_WEBHOOK=whsec_abcdefghijklmnopqrstuvwx"] {
+            check(red(env).contains("[SECRET]") || red(env).contains("[KEY]"), "A8 env secret: \(red(env))")
+        }
+        check(red("Max tokens: 16000") == "Max tokens: 16000", "A8 'tokens:' count kept")
+        for line in ["Can easily handle 4K video editing and gaming", "We ship to Ireland and the UK", "Login  Basket  Help"] {
+            check(red(line) == line, "A9 copy kept: \(line)  →  \(red(line))")
+        }
+        check(red("Login: aoife_k").contains("[USERNAME]") && red("Ship to: Aoife Kelly").contains("[NAME]"), "A9 labelled values still redacted")
+        let pem = Redactor.redactLines(["-----BEGIN PRIVATE KEY-----", "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8cKj",
+                                        "AoGBAMhQ+3+XyKk3pL0mF1JjW8Wqz7G9Y2nA5bE6cD4fH8iJ2kL3mN4oP5qR6sT7", "-----END PRIVATE KEY-----", "done"])
+        check(pem[0...3].allSatisfy { $0.hits > 0 && !$0.text.contains("MII") && !$0.text.contains("AoGB") } && pem[4].hits == 0, "A10 PEM body lines")
+        check(Config.keyHostMismatch(savedFor: "x.services.ai.azure.com", baseURL: "https://api.deepseek.com") != nil
+              && Config.keyHostMismatch(savedFor: "api.deepseek.com", baseURL: "https://api.deepseek.com") == nil
+              && Config.keyHostMismatch(savedFor: nil, baseURL: "https://api.deepseek.com") == nil, "A11 key only goes to its saved host")
+        check(Config.validBaseURL("https://x.services.ai.azure.com/openai/v1") && Config.validBaseURL("http://localhost:11434/v1")
+              && !Config.validBaseURL("sk-abc123def456") && !Config.validBaseURL("api.deepseek.com"), "A12 address must be an http(s) URL")
+        check(Config.validVoiceID("EXAVITQu4vr4xnSDxMaL") && !Config.validVoiceID("sk_0123456789abcdef0123456789abcdef0123")
+              && !Config.validVoiceID("a b"), "A12 voice ID can't hold a key")
 
         // send(): redacts by default, sends raw only when revealed
         let rawContent = ContextPacket.Content(selectionImage: img, selectedText: "Card 4242 4242 4242 4242")

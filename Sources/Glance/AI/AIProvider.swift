@@ -70,6 +70,13 @@ enum Providers {
         let preset = Config.preset(id)
         let key = Keychain.get(id) ?? ""
         if preset.needsKey && key.isEmpty { throw AIError.missingKey(preset.name) }
+        if !key.isEmpty {
+            // Audit A11: a key only goes to the host it was saved for.
+            let hostKey = "keyHost.\(id)"
+            let saved = UserDefaults.standard.string(forKey: hostKey)
+            if let problem = Config.keyHostMismatch(savedFor: saved, baseURL: Config.baseURL(for: id)) { throw AIError.api(problem) }
+            if saved == nil, let host = URL(string: Config.baseURL(for: id))?.host { UserDefaults.standard.set(host, forKey: hostKey) }
+        }
         return make(id: id, key: key)
     }
 
