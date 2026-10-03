@@ -43,6 +43,11 @@ enum Config {
 
     /// "Forget" in the menu deletes this many minutes back.
     static let forgetMinutes = 15
+    /// Longest side of the frame the recorder OCRs, in points (5K windows would otherwise cost seconds of OCR).
+    static let memoryMaxCaptureDimension = 1920.0
+    /// "Where was I?" covers the retention window: at most this many windows, this many characters each.
+    static let recapWindowLimit = 12
+    static let recapCharsPerWindow = 300
     /// Longest side of the stored thumbnail. Full frames are never stored.
     static let thumbnailMaxDimension = 320
     /// A frame counts as changed when more than this share of cells in a 128×72 grey copy changed by more than

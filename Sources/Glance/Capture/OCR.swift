@@ -10,10 +10,11 @@ enum OCR {
         let box: CGRect
     }
 
-    static func lines(in image: CGImage) throws -> [Line] {
+    /// `languageCorrection: false` is faster; the memory recorder uses it (search text, not quotes).
+    static func lines(in image: CGImage, languageCorrection: Bool = true) throws -> [Line] {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = true
+        request.usesLanguageCorrection = languageCorrection
         try VNImageRequestHandler(cgImage: image).perform([request])
         let w = CGFloat(image.width), h = CGFloat(image.height)
         return (request.results ?? []).compactMap { obs in

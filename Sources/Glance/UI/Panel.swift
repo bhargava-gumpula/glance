@@ -233,11 +233,16 @@ final class ChatModel: ObservableObject {
                 turns.append(Turn(kind: .notice, text: error.localizedDescription))
                 return
             }
-            var packet = await capture?.value
-            if history.isEmpty, let p = packet, let timeline { // memory joins the first question only
+            let source = capture
+            var packet = await source?.value
+            // A new selection while waiting: this question belongs to the old one.
+            guard !Task.isCancelled, capture == source else { return }
+            if history.isEmpty, let p = packet, p.memory.isEmpty, let timeline { // memory joins the first question only
                 let terms = Timeline.terms(from: [question, p.raw.selectedText])
                 let since = Date().timeIntervalSince1970 - Double(Config.retentionMinutes * 60)
-                let withMemory = p.withMemory((try? timeline.snippets(matching: terms, since: since)) ?? [])
+                let found = (try? timeline.snippets(matching: terms, since: since,
+                                                     fillRecent: Timeline.refersToEarlier(question))) ?? []
+                let withMemory = p.withMemory(found)
                 packet = withMemory
                 capture = Task { withMemory } // follow-ups resend the same memory
             }

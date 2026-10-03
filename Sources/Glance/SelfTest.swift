@@ -258,9 +258,39 @@ enum SelfTest {
             check(Set(found.map(\.title)) == ["ThinkPad X1 Carbon", "Zenbook 14", "Notes"],
                   "memory: the question + selection finds both laptops and the budget note, not Slack")
             check(found.first { $0.app == "Notes" }?.text.contains("Budget: €1,200") == true
-                  || found.first { $0.app == "Notes" }?.text.contains("16GB RAM") == true, "memory: snippet keeps the matching lines")
+                  && found.first { $0.app == "Notes" }?.text.contains("16GB RAM") == true, "memory: a short note is kept whole (budget included)")
+            check(Timeline.matchingLines((1...60).map { "line \($0) filler text" }.joined(separator: "\n") + "\nbattery 18h", terms: ["battery"])
+                  == "battery 18h", "memory: a long page keeps only matching lines")
+            let vague = try tl.snippets(matching: ["zzz"], since: now - 900, fillRecent: true)
+            check(vague.count == 4, "memory: \"the earlier ones\" with no word matches falls back to recent windows")
+            check(Timeline.refersToEarlier(q) && !Timeline.refersToEarlier("Is 16 GB enough?"), "memory: earlier-reference detection")
             check((try? tl.snippets(matching: ["a\"b", "c*", "NEAR(", "-x"], since: 0)) != nil, "memory: FTS query is escaped")
             check(try tl.snippets(matching: terms, since: now - 300).count == 1, "memory: only the retention window is searched")
+
+            // A19: the demo gate with the real note and long spec pages. The budget line shares no word with the
+            // specs, so it only survives because the short note is sent whole.
+            let noteURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+                .appendingPathComponent("../../demo/budget-note.txt")
+            let note = (try? String(contentsOf: noteURL, encoding: .utf8)) ?? ""
+            check(note.contains("Budget: €1,200 max"), "A19: read demo/budget-note.txt")
+            let demoPath = dbPath + "-demo"
+            defer { for ext in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: demoPath + ext) } }
+            let demo = try Timeline(path: demoPath)
+            let filler = (1...40).map { "Shop accessories, compare models and find support near you \($0)." }.joined(separator: "\n")
+            try demo.insert(ts: now - 500, app: "Safari", bundleID: "com.apple.Safari", title: "ThinkPad X1 Carbon Gen 13 | Lenovo IE",
+                            url: "https://www.lenovo.com/ie/en/c/laptops/thinkpad/thinkpadx1/",
+                            text: "ThinkPad X1 Carbon Gen 13\n\(filler)\nMemory: up to 32GB LPDDR5x\nBattery: 57Wh, up to 15 hours\nWeight: from 0.99 kg\nFrom €1,849.00", thumb: nil)
+            try demo.insert(ts: now - 400, app: "Safari", bundleID: "com.apple.Safari", title: "Zenbook | Laptops | ASUS Ireland",
+                            url: "https://www.asus.com/ie/laptops/for-home/zenbook/",
+                            text: "ASUS Zenbook 14 OLED\n\(filler)\n16GB LPDDR5X memory\n75Wh battery\n1.2 kg\n€1,099", thumb: nil)
+            try demo.insert(ts: now - 300, app: "Notes", bundleID: "com.apple.Notes", title: "Notes", url: nil, text: note, thumb: nil)
+            let gateSelection = "Chip\nApple M4 chip\nMemory\n16GB unified memory\nStorage\n256GB SSD\nBattery and Power\nUp to 18 hours Apple TV app movie playback\nWeight 1.24 kg"
+            let gate = try demo.snippets(matching: Timeline.terms(from: [q, gateSelection]), since: now - 900,
+                                         fillRecent: Timeline.refersToEarlier(q))
+            check(gate.count == 3 && gate.contains { $0.app == "Notes" && $0.text.contains("Budget: €1,200 max") },
+                  "A19: the gate question sends the note with its budget line, plus both laptops")
+            check(gate.contains { $0.title?.hasPrefix("ThinkPad") == true && $0.text.contains("32GB") && !$0.text.contains("support near you 7.") },
+                  "A19: long pages still send only their matching lines")
 
             try tl.trim(olderThan: now - 500)
             check(try tl.count() == 3 && (try tl.count(matching: "\"thinkpad\"")) == 0, "retention: old rows and FTS entries deleted")
@@ -285,6 +315,8 @@ enum SelfTest {
         check(skip("com.apple.Safari", url: "https://www.apple.com/ie/macbook-air/specs/") == nil, "allowed: normal product page")
         check(skip("com.apple.Notes", title: "Notes", priv: nil) == nil, "allowed: Notes (not a browser)")
         check(skip("com.apple.Safari", url: "https://apple.com", priv: nil) == "private window", "exclusion: browser window we can't read")
+        check(skip("com.apple.Safari", title: "Online Banking", url: nil) == "blocked site"
+              && skip("com.apple.Safari", title: "Home", url: nil) == "unknown page", "exclusion: browser page without a URL")
         check(skip("com.google.Chrome", url: "https://apple.com", priv: true) == "private window", "exclusion: incognito window")
         check(Exclusions.looksPrivate("Private Browsing") && Exclusions.looksPrivate("New Incognito Tab")
               && !Exclusions.looksPrivate("MacBook Air - Apple (IE)"), "private markers")
@@ -293,7 +325,7 @@ enum SelfTest {
                     "https://www.revolut.com/app", "https://site.ie/login?next=/"] {
             check(skip("com.apple.Safari", url: url) == "blocked site", "URL blocklist: \(url)")
         }
-        check(skip("com.apple.Safari", title: "Sign in – Google Accounts", url: nil) == "blocked site", "URL blocklist: by title")
+        check(skip("com.apple.Safari", title: "Sign in – Google Accounts", url: "https://example.com") == "blocked site", "URL blocklist: by title")
         check(skip("com.apple.Safari", url: "https://www.asus.com/ie/laptops/for-home/zenbook/") == nil,
               "URL blocklist: no false hit on a laptop page")
 

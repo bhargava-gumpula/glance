@@ -1,4 +1,4 @@
-/// Modes register here (Explain now; Guide and Do in later phases).
+/// Modes register here: one file per mode (`Modes/<Mode>.swift`) plus one line in `all`.
 struct Mode: Sendable {
     struct FollowUp: Sendable {
         let label: String
@@ -8,13 +8,17 @@ struct Mode: Sendable {
     let name: String
     let system: String
     let followUps: [FollowUp]
+    /// Picks this mode for a typed or spoken question. nil: only the default (Explain).
+    var matches: (@Sendable (String) -> Bool)? = nil
 
     static let explain = Mode(
         name: "Explain",
         system: """
         You are Glance, a helper on the user's Mac. The user pointed at part of their screen and asked about it. \
         You get only their selection: an image of it, or its OCR text when images aren't available. \
-        You can't see the rest of the screen.
+        You can't see the rest of the screen. The message may also include lines from what they looked at earlier \
+        on this Mac (Glance's on-device memory, redacted); use them when the question refers to earlier things, \
+        and name which page or note each detail came from.
         Answer about what they pointed at, grounded in what is in the selection. Quote the exact spec or value \
         you are relying on. If the answer isn't in the selection, say so and give your best general answer, clearly marked.
         Start every reply with one line: "Say: " then a spoken version of the answer in 1-2 short sentences \
@@ -29,5 +33,8 @@ struct Mode: Sendable {
         ]
     )
 
-    static let all = [explain]
+    /// First match wins; Explain is the default.
+    static let all = [recap, saveComparison, explain]
+
+    static func forQuestion(_ q: String) -> Mode { all.first { $0.matches?(q) == true } ?? explain }
 }

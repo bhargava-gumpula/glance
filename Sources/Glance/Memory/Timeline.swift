@@ -30,9 +30,14 @@ final class Timeline: @unchecked Sendable {
     static var defaultPath: String {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Glance", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true,
+        var folder = dir
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o700])
-        return dir.appendingPathComponent("timeline.sqlite").path
+        // Keep the memory (and its -wal/-shm files) out of Time Machine, so Forget and retention really delete it.
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? folder.setResourceValues(values)
+        return folder.appendingPathComponent("timeline.sqlite").path
     }
 
     private var db: OpaquePointer?
@@ -42,7 +47,7 @@ final class Timeline: @unchecked Sendable {
         guard sqlite3_open(path, &db) == SQLITE_OK else { throw DBError.sqlite("can't open") }
         chmod(path, 0o600)
         guard sqlite3_compileoption_used("ENABLE_FTS5") == 1 else { throw DBError.noFTS5 }
-        try exec("PRAGMA journal_mode=WAL; PRAGMA secure_delete=ON;")
+        try exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA secure_delete=ON;")
         try migrate()
     }
 
@@ -77,7 +82,7 @@ final class Timeline: @unchecked Sendable {
         }
     }
 
-    var version: Int { (try? int("SELECT version FROM schema_version")) ?? 0 }
+    var version: Int { locked { (try? int("SELECT version FROM schema_version")) ?? 0 } }
 
     func insert(ts: Double = Date().timeIntervalSince1970, app: String, bundleID: String?, title: String?, url: String?,
                 text: String, thumb: Data?) throws {
@@ -100,7 +105,25 @@ final class Timeline: @unchecked Sendable {
 
     /// Rolling deletion.
     func trim(olderThan ts: Double) throws {
-        try locked { try exec("DELETE FROM snapshots WHERE ts < \(ts); PRAGMA wal_checkpoint(TRUNCATE);") }
+        try locked {
+            try exec("DELETE FROM snapshots WHERE ts < \(ts)")
+            if sqlite3_changes(db) > 0 { try exec("PRAGMA wal_checkpoint(TRUNCATE)") }
+        }
+    }
+
+    /// Every row since `ts`, newest first (retention keeps this small). For "Where was I?" and the recent-windows fallback.
+    func recent(since ts: Double) throws -> [Snippet] {
+        try locked {
+            let st = try prepare("SELECT ts, app, window_title, url, text FROM snapshots WHERE ts >= ? ORDER BY ts DESC")
+            defer { sqlite3_finalize(st) }
+            sqlite3_bind_double(st, 1, ts)
+            var out: [Snippet] = []
+            while sqlite3_step(st) == SQLITE_ROW {
+                func col(_ i: Int32) -> String? { sqlite3_column_text(st, i).map { String(cString: $0) } }
+                out.append(Snippet(ts: sqlite3_column_double(st, 0), app: col(1) ?? "", title: col(2), url: col(3), text: col(4) ?? ""))
+            }
+            return out
+        }
     }
 
     func count(matching query: String? = nil) throws -> Int {
@@ -113,14 +136,28 @@ final class Timeline: @unchecked Sendable {
         }
     }
 
-    /// Newest snapshot per window that matches any of `terms`, best matches first. Only lines that contain a term
-    /// are kept, up to `Config.memorySnippetChars` per window.
-    func snippets(matching terms: [String], since ts: Double, limit: Int = Config.memorySnippetLimit) throws -> [Snippet] {
+    /// Best-matching snapshot per window for any of `terms`, oldest first. A window's whole text is kept when it fits
+    /// `Config.memorySnippetChars`, otherwise only the lines that contain a term.
+    /// `fillRecent`: when fewer than 3 windows match, add the newest other windows (for "the earlier ones").
+    func snippets(matching terms: [String], since ts: Double, limit: Int = Config.memorySnippetLimit,
+                  fillRecent: Bool = false) throws -> [Snippet] {
+        var out = try matches(terms, since: ts, limit: limit)
+        if fillRecent, out.count < 3 {
+            var seen = Set(out.map { "\($0.app)|\($0.title ?? "")" })
+            for row in try recent(since: ts) where out.count < limit && seen.insert("\(row.app)|\(row.title ?? "")").inserted {
+                out.append(Snippet(ts: row.ts, app: row.app, title: row.title, url: row.url,
+                                   text: Timeline.matchingLines(row.text, terms: terms)))
+            }
+        }
+        return out.sorted { $0.ts < $1.ts }
+    }
+
+    private func matches(_ terms: [String], since ts: Double, limit: Int) throws -> [Snippet] {
         guard let match = Timeline.ftsQuery(terms) else { return [] }
         return try locked {
             let st = try prepare("""
                 SELECT s.ts, s.app, s.window_title, s.url, s.text FROM snapshots_fts f JOIN snapshots s ON s.id = f.rowid
-                WHERE snapshots_fts MATCH ? AND s.ts >= ? ORDER BY f.rank LIMIT 50
+                WHERE snapshots_fts MATCH ? AND s.ts >= ? ORDER BY f.rank
                 """)
             defer { sqlite3_finalize(st) }
             bind(st, 1, match)
@@ -133,8 +170,14 @@ final class Timeline: @unchecked Sendable {
                 out.append(Snippet(ts: sqlite3_column_double(st, 0), app: col(1) ?? "", title: col(2), url: col(3),
                                    text: Timeline.matchingLines(col(4) ?? "", terms: terms)))
             }
-            return out.sorted { $0.ts < $1.ts }
+            return out
         }
+    }
+
+    /// Questions about earlier things ("the earlier ones", "compare", "before") also get recent windows.
+    static func refersToEarlier(_ q: String) -> Bool {
+        q.lowercased().range(of: #"earlier|before|previous|last (one|page|few)|other (one|page)s?|those|compar|differen|\bvs\b|versus"#,
+                             options: .regularExpression) != nil
     }
 
     // MARK: Query helpers (pure, selftested)
@@ -169,12 +212,17 @@ final class Timeline: @unchecked Sendable {
     }
 
     static func matchingLines(_ text: String, terms: [String]) -> String {
+        if text.count <= Config.memorySnippetChars { return text }
         var out = ""
-        for line in text.split(separator: "\n") {
+        let lines = text.split(separator: "\n")
+        for line in lines {
             let words = Set(line.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init))
             guard terms.contains(where: words.contains) else { continue }
             if out.count + line.count > Config.memorySnippetChars { break }
             out += line + "\n"
+        }
+        if out.isEmpty { // nothing matched (a recent window): its first lines
+            for line in lines where out.count + line.count <= Config.memorySnippetChars { out += line + "\n" }
         }
         return out.trimmingCharacters(in: .newlines)
     }
