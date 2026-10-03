@@ -164,8 +164,78 @@ enum SelfTest {
         check(normal.contains("[CARD]") && normal.contains("[EMAIL]") && !normal.contains("4242"),
               "send(): screen and question redacted by default")
         check(sent(reveal: true, question: "Don't redact").contains("4242 4242 4242 4242"), "send(): raw only when revealed")
+
+        // Phase 2: OCR warm-up
+        let warm = OCR.warmUp()
+        print("      OCR warm-up: \(String(format: "%.1f", warm.seconds)) s (cold); recognized \"\(warm.text)\"")
+        check(warm.text.contains("Glance"), "OCR warm-up actually runs recognition")
+        check(OCR.warmUp().seconds < 3, "OCR is fast once warmed up")
+
+        // Phase 2: speech-to-text request (fake key, nothing is sent)
+        let wav = Recorder.wav(Data(count: 3200))
+        check(wav.count == 3244 && String(data: wav.prefix(4), encoding: .ascii) == "RIFF"
+              && abs(Recorder.duration(ofWAV: wav) - 0.1) < 0.001, "WAV header and duration")
+        let stt = ElevenLabsSTT(apiKey: "test-key").makeRequest(wav: wav)
+        let sttBody = String(decoding: stt.httpBody ?? Data(), as: UTF8.self)
+        check(stt.url?.absoluteString == "https://api.elevenlabs.io/v1/speech-to-text" && stt.httpMethod == "POST",
+              "STT: endpoint")
+        check(stt.value(forHTTPHeaderField: "xi-api-key") == "test-key"
+              && stt.value(forHTTPHeaderField: "Content-Type")?.hasPrefix("multipart/form-data; boundary=") == true,
+              "STT: key header, multipart")
+        check(sttBody.contains("name=\"model_id\"\r\n\r\nscribe_v2\r\n") && sttBody.contains("name=\"file\"; filename=\"q.wav\"")
+              && sttBody.contains("name=\"tag_audio_events\"\r\n\r\nfalse"), "STT: model, file, no audio events")
+
+        // Phase 2: text-to-speech request
+        let tts = ElevenLabsTTS(apiKey: "test-key", voiceID: "voice1").makeRequest(text: "Hello.")
+        check(tts.url?.absoluteString == "https://api.elevenlabs.io/v1/text-to-speech/voice1/stream?output_format=pcm_24000",
+              "TTS: streaming endpoint, raw PCM")
+        check(body(tts)["model_id"] as? String == "eleven_flash_v2_5" && body(tts)["text"] as? String == "Hello."
+              && tts.value(forHTTPHeaderField: "xi-api-key") == "test-key", "TTS: flash model, text, key header")
+
+        // Phase 2: engine selection and fallback
+        check(Voice.sttChain(elevenLabsKey: "k").map(\.name) == ["ElevenLabs", "on-device"], "STT: ElevenLabs first, Apple fallback")
+        check(Voice.sttChain(elevenLabsKey: nil).map(\.name) == ["on-device"], "STT: no key → Apple only")
+        check(Voice.tts(muted: false, elevenLabsKey: "k", voiceID: "v") is ElevenLabsTTS, "TTS: ElevenLabs when on")
+        check(Voice.tts(muted: true, elevenLabsKey: "k", voiceID: "v") == nil
+              && Voice.tts(muted: false, elevenLabsKey: nil, voiceID: "v") == nil, "TTS: off when muted or no key")
+        func heard(_ chain: [SpeechToText]) -> String {
+            let box = ResultBox()
+            let done = DispatchSemaphore(value: 0)
+            Task.detached {
+                box.value = (try? await Voice.transcribe(wav: wav, with: chain)).map { "\($0.engine): \($0.text)" } ?? "error"
+                done.signal()
+            }
+            _ = done.wait(timeout: .now() + 5)
+            return box.value
+        }
+        check(heard([FakeSTT(name: "cloud", result: nil), FakeSTT(name: "local", result: "hi")]) == "local: hi",
+              "STT: falls back when the first engine fails")
+        check(heard([FakeSTT(name: "cloud", result: " "), FakeSTT(name: "local", result: "hi")]) == "local: hi",
+              "STT: falls back on an empty transcript")
+        check(heard([FakeSTT(name: "cloud", result: "yes"), FakeSTT(name: "local", result: "hi")]) == "cloud: yes",
+              "STT: uses the first engine when it works")
+        check(heard([FakeSTT(name: "cloud", result: nil)]) == "error", "STT: error when every engine fails")
+
+        // Phase 2: sentence splitting for streamed speech
+        let split = Voice.sentences("Yes, 16 GB is enough. It costs €1,299.00 and\nhas 1.5 GB")
+        check(split.done == ["Yes, 16 GB is enough.", "It costs €1,299.00 and"] && split.rest == "has 1.5 GB",
+              "sentences: splits on end marks and newlines, not decimals")
+        check(Voice.speakable("**16 GB** is `enough`") == "16 GB is enough", "speakable: markdown dropped")
+
         print(failures == 0 ? "selftest: all passed" : "selftest: \(failures) failed")
         exit(failures == 0 ? 0 : 1)
+    }
+}
+
+private final class ResultBox: @unchecked Sendable { var value = "" }
+
+/// Speech-to-text that returns `result`, or throws when it is nil.
+private struct FakeSTT: SpeechToText {
+    let name: String
+    let result: String?
+    func transcribe(wav: Data) async throws -> String {
+        guard let result else { throw URLError(.notConnectedToInternet) }
+        return result
     }
 }
 

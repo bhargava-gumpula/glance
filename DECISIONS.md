@@ -15,8 +15,11 @@ Each open decision has a working default and exactly one place to change it.
 | What a question sends | Only the selected region: one image of it plus its OCR text (text-only models get just the text). The rest of the screen is never captured | `ContextPacket.capture` / `firstMessage` |
 | Explain prompt and follow-ups | brief, grounded, quotes the spec it relies on; "Explain more" / "Example" | `Modes/Mode.swift` (moves to `Resources/prompts/` if prompts need editing without a rebuild) |
 | New selection = new conversation | yes | `ChatModel.pointed` |
-| ElevenLabs voice | set in Phase 2 | Settings (Phase 2) |
-| Speak answers aloud | on | `Config.ttsEnabled` |
+| ElevenLabs voice | premade "Rachel" (`21m00Tcm4TlvDq8ikWAM`), `eleven_flash_v2_5`, raw PCM 24 kHz | Settings → Voice ID; model in `Config.elevenLabsTTSModel` |
+| Speech-to-text | ElevenLabs `scribe_v2` (6 s timeout), then Apple on-device; Apple only without a key | `Voice.sttChain`, `Config.sttTimeoutSeconds` |
+| Hold vs tap | hold ⌥Space ≥ 0.3 s = talk, shorter = toggle panel | `Config.holdToTalkSeconds` |
+| Spoken answer length | first sentence, then more while under 280 characters | `Config.spokenCharLimit` |
+| Speak answers aloud | on (panel speaker button mutes; needs an ElevenLabs key) | `Config.ttsEnabled` |
 | Never-captured apps | Keychain, System Settings, Passwords, 1Password, Bitwarden | `Config.excludedApps` |
 | Never-captured sites | set in Phase 3 | URL blocklist (Phase 3) |
 | Redaction rules | Cards (Luhn), IBAN (mod-97), PPSN (check letter), SSN, emails, phones, street addresses + Eircodes + labelled addresses, crypto wallets (ETH, BTC, base58) and private keys/seed phrases, API keys/JWTs/bearer tokens/passwords, labelled account/brokerage/ID numbers and 2FA codes, usernames/@handles//Users paths, dates of birth, names (labelled, or two-word names found by Apple's NaturalLanguage tagger), IP addresses. Matching OCR lines are blacked out in images | `Privacy/Redactor.swift` |

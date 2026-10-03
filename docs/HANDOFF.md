@@ -2,7 +2,7 @@
 
 ## Status
 **Phase 0 (setup): done, gate passed (2026-10-03).**
-**Phase 1 (end-to-end slice): done, gate passed (2026-10-03)** with DeepSeek (via the owner's Azure AI Foundry endpoint, text-only). Claude and OpenAI weren't tested (no keys yet); Ollama isn't installed. Phase 2 hasn't started.
+**Phase 1 (end-to-end slice): done, gate passed (2026-10-03)** with DeepSeek (via the owner's Azure AI Foundry endpoint, text-only). Claude and OpenAI weren't tested (no keys yet); Ollama isn't installed. **Phase 2 (voice): built, owner checks pending (2026-10-03).** See "Phase 2" below.
 
 Phase 1 adds:
 - ⌥Space shows the panel and starts the **PointTool**: drag a box over any app (Esc skips). The box stays highlighted and lets clicks through. The "Point" button in the panel starts a new one.
@@ -67,4 +67,26 @@ Built so far:
 - The Claude request uses beta `server-side-fallback-2026-07-01` with `fallbacks: "default"`. If Anthropic ever rejects it, delete those two lines in `AnthropicProvider.swift`.
 - OpenAI default model `gpt-5` is a guess at a safe current id; change it in Settings if needed.
 
-## Next: Phase 2 (voice). See docs/PLAN.md. Don't start until the owner approves the Phase 1 gate.
+
+## Phase 2 (voice)
+- **OCR warm-up:** `OCR.warmUp()` runs one tiny OCR in the background at launch. Timing goes to the log (below). Measured: 0.1 s inside the app right after a run; a fresh CLI process (`--selftest`) still pays ~27 s cold every time, so the selftest takes about half a minute.
+- **Hold ⌥Space to talk** (≥ 0.3 s; a shorter tap toggles the panel as before, now on key-up). Recording starts on key-down so the first word isn't clipped; the panel shows "Listening…" then "Transcribing…". Holding again stops the current spoken answer (barge-in) and a spoken question replaces one still being answered.
+- **Speech-to-text:** `Voice/Voice.swift`, protocol `SpeechToText`: ElevenLabs `scribe_v2` (16 kHz mono WAV, 6 s timeout) → on any failure Apple `SFSpeechRecognizer` (on-device when supported). Without an ElevenLabs key it's Apple only. Questions transcribed on-device show "(on-device)".
+- **Spoken answers:** protocol `TextToSpeech`: ElevenLabs HTTP stream (`eleven_flash_v2_5`, `pcm_24000`) per sentence, started as soon as the first full sentence arrives, played through `PCMPlayer` (`Voice/Audio.swift`). Short version only: first sentence plus more while under 280 characters; markdown stripped. TTS failure → silent, text only. Speaker button in the panel mutes (`ttsEnabled`).
+- **Settings → Voice:** ElevenLabs key (Keychain account `elevenlabs`, read once per launch) and Voice ID.
+- Voice audio goes to ElevenLabs; screen content still only leaves through `ContextPacket.send()`.
+- **Timings:** `log stream --predicate 'subsystem == "ie.dublinhacx.glance"'` shows the warm-up time, "transcribed by … in … s" and "release → first spoken audio … s" (time until the first audio buffer is queued; the speaker adds a few ms). Use `/usr/bin/log` in zsh (`log` is a shell builtin there). Keys, transcripts and screen text are never logged.
+
+### Phase 2 check (owner)
+- [x] `./scripts/selftest.sh` passes (STT/TTS request format, fallback order, sentence split, warm-up)
+- [x] Warm-up runs at launch (log: 0.1 s)
+- [ ] Owner: fresh launch → first point answers without the ~28 s hang
+- [ ] Owner: add the ElevenLabs key in Settings, then 5 spoken questions transcribed correctly and answered aloud; read the release → first spoken audio times from the log
+- [ ] Owner: speaker button mutes (also stops speech mid-answer)
+- [ ] Owner: Wi-Fi off → hold ⌥Space → question shows "(on-device)" (macOS asks for Speech Recognition the first time); the answer then needs a provider that works offline, or shows the network error as text
+
+### Phase 2 gotchas
+- Xcode is now installed but its license isn't accepted, so `swift build` fails with the default developer dir. Owner: `sudo xcodebuild -license accept`. Until then: `DEVELOPER_DIR=/Library/Developer/CommandLineTools ./scripts/build-app.sh`.
+- Recording starts on every key-down, so a quick tap shows the orange mic dot for a moment.
+- The default voice ID is the premade "Rachel"; if the account doesn't have it, TTS fails silently (log shows HTTP 4xx). Paste another voice ID in Settings.
+- `pcm_24000` on the free tier is UNVERIFIED; if TTS gets HTTP 4xx, try `pcm_22050` (change `PCMPlayer.sampleRate` too).

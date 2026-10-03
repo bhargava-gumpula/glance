@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Vision
 
@@ -20,5 +21,24 @@ enum OCR {
             let b = obs.boundingBox // normalized, bottom-left origin
             return Line(text: text, box: CGRect(x: b.minX * w, y: (1 - b.maxY) * h, width: b.width * w, height: b.height * h))
         }
+    }
+
+    /// The first Vision call after launch loads its models (~28 s once). Run one tiny OCR at launch so the
+    /// first real question doesn't wait. Returns the recognized text and how long it took.
+    @discardableResult
+    static func warmUp() -> (text: String, seconds: Double) {
+        let start = Date()
+        let w = 160, h = 48
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)
+        else { return ("", 0) }
+        ctx.setFillColor(.white)
+        ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
+        NSAttributedString(string: "Glance", attributes: [.font: NSFont.systemFont(ofSize: 28), .foregroundColor: NSColor.black])
+            .draw(at: NSPoint(x: 12, y: 8))
+        NSGraphicsContext.current = nil
+        let text = ctx.makeImage().flatMap { try? lines(in: $0).map(\.text).joined(separator: " ") } ?? ""
+        return (text, Date().timeIntervalSince(start))
     }
 }

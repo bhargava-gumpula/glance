@@ -9,7 +9,7 @@ final class SettingsController {
 
     func show() {
         if window == nil {
-            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 300),
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 440),
                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
             w.title = "Glance Settings"
             w.isReleasedWhenClosed = false
@@ -32,6 +32,9 @@ final class SettingsModel: ObservableObject {
     @Published var keyInput = ""
     @Published var hasKey = false
     @Published var saved = ""
+    @Published var voiceID = Config.elevenLabsVoiceID
+    @Published var elevenKeyInput = ""
+    @Published var hasElevenKey = false
 
     var preset: Config.ProviderPreset { Config.preset(providerID) }
 
@@ -41,6 +44,9 @@ final class SettingsModel: ObservableObject {
         supportsImages = Config.supportsImages(for: providerID)
         keyInput = ""
         hasKey = Keychain.has(providerID)
+        voiceID = Config.elevenLabsVoiceID
+        elevenKeyInput = ""
+        hasElevenKey = Keychain.has(Voice.elevenLabsAccount)
         saved = ""
     }
 
@@ -58,6 +64,12 @@ final class SettingsModel: ObservableObject {
         if !keyInput.isEmpty { Keychain.set(providerID, keyInput) }
         keyInput = ""
         hasKey = Keychain.has(providerID)
+        let voice = voiceID.trimmingCharacters(in: .whitespaces)
+        if voice.isEmpty { d.removeObject(forKey: "elevenLabsVoiceID") } else { d.set(voice, forKey: "elevenLabsVoiceID") }
+        voiceID = Config.elevenLabsVoiceID
+        if !elevenKeyInput.isEmpty { Keychain.set(Voice.elevenLabsAccount, elevenKeyInput) }
+        elevenKeyInput = ""
+        hasElevenKey = Keychain.has(Voice.elevenLabsAccount)
         saved = "Saved."
     }
 
@@ -65,6 +77,12 @@ final class SettingsModel: ObservableObject {
         Keychain.set(providerID, "")
         hasKey = false
         saved = "Key removed."
+    }
+
+    func removeElevenKey() {
+        Keychain.set(Voice.elevenLabsAccount, "")
+        hasElevenKey = false
+        saved = "ElevenLabs key removed."
     }
 
     func resetDefaults() {
@@ -89,6 +107,14 @@ struct SettingsView: View {
                     SecureField(model.hasKey ? "Key saved in Keychain. Type to replace" : "API key", text: $model.keyInput)
                     if model.hasKey { Button("Remove") { model.removeKey() } }
                 }
+            }
+            Section("Voice (ElevenLabs; without a key, Apple on-device speech and text-only answers)") {
+                HStack {
+                    SecureField(model.hasElevenKey ? "Key saved in Keychain. Type to replace" : "ElevenLabs API key",
+                                text: $model.elevenKeyInput)
+                    if model.hasElevenKey { Button("Remove") { model.removeElevenKey() } }
+                }
+                TextField("Voice ID", text: $model.voiceID)
             }
             HStack {
                 Button("Reset to defaults") { model.resetDefaults() }

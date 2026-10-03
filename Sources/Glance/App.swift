@@ -31,7 +31,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for item in menu.items where item.action != #selector(NSApplication.terminate(_:)) { item.target = self }
         statusItem.menu = menu
 
-        hotkey = Hotkey(keyCode: Config.hotkeyKeyCode, onPress: { [weak self] in self?.panel.toggle() })
+        hotkey = Hotkey(keyCode: Config.hotkeyKeyCode,
+                        onPress: { [weak self] in self?.panel.keyDown() },
+                        onRelease: { [weak self] in self?.panel.keyUp() })
+
+        // Load Vision's models now so the first real question doesn't hang.
+        Task.detached(priority: .utility) {
+            let warm = OCR.warmUp()
+            log.notice("OCR warm-up took \(warm.seconds, format: .fixed(precision: 1), privacy: .public) s")
+        }
 
         if !Permission.allGranted { onboarding.show() }
     }

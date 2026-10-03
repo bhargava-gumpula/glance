@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Every tunable default lives here. Settings overrides are stored in UserDefaults under the same key.
 /// See DECISIONS.md for which open decision each value belongs to.
@@ -13,6 +14,19 @@ enum Config {
     static var retentionMinutes: Int { value("retentionMinutes", default: 15) }
     static var provider: String { value("provider", default: "claude") }
     static var ttsEnabled: Bool { value("ttsEnabled", default: true) }
+
+    // MARK: Voice (Phase 2)
+
+    /// Holding the hotkey longer than this means talk; a shorter tap toggles the panel.
+    static let holdToTalkSeconds = 0.3
+    /// ElevenLabs voice for spoken answers (default: the premade "Rachel"). Settings override.
+    static var elevenLabsVoiceID: String { value("elevenLabsVoiceID", default: "21m00Tcm4TlvDq8ikWAM") }
+    static let elevenLabsSTTModel = "scribe_v2"
+    static let elevenLabsTTSModel = "eleven_flash_v2_5"
+    /// After this, speech-to-text falls back to Apple on-device.
+    static let sttTimeoutSeconds: Double = 6
+    /// Spoken answers are short: the first sentence, plus more while they fit this many characters.
+    static let spokenCharLimit = 280
 
     /// Apps that are never captured (bundle IDs).
     static var excludedApps: [String] {
@@ -78,3 +92,7 @@ enum Config {
         UserDefaults.standard.object(forKey: key) as? T ?? fallback
     }
 }
+
+/// Timing and fallback notes, readable with `log stream --predicate 'subsystem == "ie.dublinhacx.glance"'`.
+/// Never log keys, transcripts or screen text here.
+let log = Logger(subsystem: Config.bundleID, category: "glance")
