@@ -13,15 +13,19 @@ Built so far:
 ## Phase 0 gate checklist
 - [x] `./scripts/selftest.sh` passes
 - [x] App builds, launches, menu-bar icon appears
-- [ ] Owner: ⌥Space opens/closes the panel
+- [x] Owner: ⌥Space opens/closes the panel
 - [ ] Owner: create the "Glance Dev" signing certificate (below), then rebuild
-- [ ] Owner: grant all three permissions, rebuild, confirm they are **still granted**
+- [x] Owner: granted all three permissions (on the ad-hoc build)
+- [ ] After the certificate exists: rebuild and confirm permissions are **still granted** (ad-hoc grants reset on rebuild)
 
 ## Create the "Glance Dev" certificate (owner, 5 min)
 1. Open **Keychain Access** → menu **Keychain Access → Certificate Assistant → Create a Certificate…**
 2. Name: `Glance Dev`. Identity Type: **Self-Signed Root**. Certificate Type: **Code Signing**. Click Create.
 3. Run `./scripts/build-app.sh`. The warning about ad-hoc signing should be gone.
 4. The first time codesign uses the key, macOS asks for keychain access. Choose **Always Allow**.
+
+## Owner requests for later
+- Make the panel a more interactive chat (conversation thread, follow-ups). Fits Phase 1 (panel + Explain follow-ups) and Phase 8 (polish).
 
 ## Findings / gotchas
 - **No Xcode, only Command Line Tools (Swift 6.4, macOS 27.0 SDK).** The CLT lack SwiftUI's macro plugin, so `@State`, `@Observable` and other SwiftUI macros **don't compile**. Until Xcode is installed, use AppKit or macro-free SwiftUI (e.g. `TimelineView`, plain `ObservableObject` classes). Installing Xcode removes this limit. `sudo mas install 497799835` needs the owner's password.
