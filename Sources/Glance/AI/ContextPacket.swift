@@ -4,13 +4,20 @@ import ScreenCaptureKit
 /// What Glance knows about the thing you pointed at. Built already redacted:
 /// OCR lines with sensitive values are blacked out in the images and replaced in the text.
 struct ContextPacket: Sendable {
+    struct Content: Sendable {
+        /// JPEG crop of the selection.
+        let selectionImage: Data
+        /// JPEG of the whole screen, downscaled, with the selection outlined in red.
+        let screenImage: Data
+        let selectedText: String
+        let screenText: String
+    }
+
     let appName: String
-    /// JPEG crop of the selection.
-    let selectionImage: Data
-    /// JPEG of the whole screen, downscaled, with the selection outlined in red.
-    let screenImage: Data
-    let selectedText: String
-    let screenText: String
+    /// What is normally sent.
+    let redacted: Content
+    /// Unredacted copy, kept in memory only. Sent only when the user explicitly asks Glance to look at hidden data.
+    let raw: Content
     let redactions: Int
 
     /// What the user sees before anything goes out.
@@ -21,30 +28,41 @@ struct ContextPacket: Sendable {
         let imagesSent: Bool
         let selectedText: String
         let redactions: Int
+        let revealed: Bool
     }
 
     /// HARD RULE: this is the only code path that sends screen content off the Mac.
-    /// It redacts the question too, and shows the preview before the request starts.
+    /// `history` holds the user's own words and earlier answers. Everything the user wrote is redacted,
+    /// and the redacted packet is attached to the first question, unless `reveal` is set because the user
+    /// explicitly asked to see hidden data. `announce` shows the preview before the request starts.
     @MainActor
-    static func send(_ packet: ContextPacket?, question: String, history: [ChatMessage], mode: Mode,
-                     provider: AIProvider, showPreview: (Preview) -> Void)
-        -> (message: ChatMessage, answer: AsyncThrowingStream<String, Error>) {
-        let q = Redactor.redact(question)
-        var message = ChatMessage(role: .user, text: q.text)
-        if let packet, history.isEmpty {
-            message = packet.firstMessage(question: q.text, imagesAllowed: provider.supportsImages)
-            showPreview(Preview(providerName: provider.name, image: NSImage(data: packet.selectionImage),
-                                imagesSent: provider.supportsImages, selectedText: packet.selectedText,
-                                redactions: packet.redactions + q.hits))
+    static func send(_ packet: ContextPacket?, history: [ChatMessage], question: String, reveal: Bool, announce: Bool,
+                     mode: Mode, provider: AIProvider, showPreview: (Preview) -> Void) -> AsyncThrowingStream<String, Error> {
+        var questionHits = 0
+        var turns = (history + [ChatMessage(role: .user, text: question)]).map { m -> ChatMessage in
+            guard m.role == .user, !reveal else { return m }
+            let r = Redactor.redact(m.text)
+            questionHits = r.hits // the last user turn is the new question
+            return ChatMessage(role: .user, text: r.text)
         }
-        return (message, provider.stream(system: mode.system, messages: history + [message]))
+        if let packet, let first = turns.firstIndex(where: { $0.role == .user }) {
+            let content = reveal ? packet.raw : packet.redacted
+            turns[first] = packet.firstMessage(content, question: turns[first].text, imagesAllowed: provider.supportsImages)
+            if announce {
+                showPreview(Preview(providerName: provider.name, image: NSImage(data: content.selectionImage),
+                                    imagesSent: provider.supportsImages, selectedText: content.selectedText,
+                                    redactions: reveal ? 0 : packet.redactions + questionHits, revealed: reveal))
+            }
+        }
+        return provider.stream(system: mode.system, messages: turns)
     }
 
-    func firstMessage(question: String, imagesAllowed: Bool) -> ChatMessage {
-        var text = "App: \(appName)\nText in my selection (OCR):\n\(selectedText.isEmpty ? "(none)" : selectedText)\n"
-        if !imagesAllowed { text += "\nOther text on screen (OCR):\n\(screenText)\n" }
+    func firstMessage(_ content: Content, question: String, imagesAllowed: Bool) -> ChatMessage {
+        var text = "App: \(appName)\nText in my selection (OCR):\n\(content.selectedText.isEmpty ? "(none)" : content.selectedText)\n"
+        if !imagesAllowed { text += "\nOther text on screen (OCR):\n\(content.screenText)\n" }
         text += "\nMy question: \(question)"
-        return ChatMessage(role: .user, text: text, images: imagesAllowed ? [selectionImage, screenImage] : [])
+        return ChatMessage(role: .user, text: text,
+                           images: imagesAllowed ? [content.selectionImage, content.screenImage] : [])
     }
 
     enum CaptureError: LocalizedError {
@@ -86,27 +104,34 @@ struct ContextPacket: Sendable {
             let lines = try OCR.lines(in: shot)
             var hits = 0
             var blackout: [CGRect] = []
-            var selected: [String] = []
-            var all: [String] = []
+            var selected: [String] = [], rawSelected: [String] = []
+            var all: [String] = [], rawAll: [String] = []
             for line in lines {
                 let r = Redactor.redact(line.text)
                 if r.hits > 0 { hits += r.hits; blackout.append(line.box.insetBy(dx: -4, dy: -4)) }
                 all.append(r.text)
-                if crop.contains(CGPoint(x: line.box.midX, y: line.box.midY)) { selected.append(r.text) }
+                rawAll.append(line.text)
+                if crop.contains(CGPoint(x: line.box.midX, y: line.box.midY)) {
+                    selected.append(r.text)
+                    rawSelected.append(line.text)
+                }
+            }
+            func content(_ image: CGImage, _ selected: [String], _ all: [String]) throws -> Content {
+                guard let cropped = image.cropping(to: crop) else { throw CaptureError.encode }
+                let outlined = try draw(image, size: full.size) { ctx in
+                    ctx.setStrokeColor(CGColor(red: 1, green: 0.1, blue: 0.1, alpha: 1))
+                    ctx.setLineWidth(max(4, px * 3))
+                    ctx.stroke(flip(crop, height: full.height))
+                }
+                return Content(selectionImage: try jpeg(cropped), screenImage: try jpeg(outlined),
+                               selectedText: selected.joined(separator: "\n"), screenText: all.joined(separator: "\n"))
             }
             let redacted = try draw(shot, size: full.size) { ctx in
                 ctx.setFillColor(.black)
                 for box in blackout { ctx.fill(flip(box, height: full.height)) }
             }
-            guard let cropped = redacted.cropping(to: crop) else { throw CaptureError.encode }
-            let outlined = try draw(redacted, size: full.size) { ctx in
-                ctx.setStrokeColor(CGColor(red: 1, green: 0.1, blue: 0.1, alpha: 1))
-                ctx.setLineWidth(max(4, px * 3))
-                ctx.stroke(flip(crop, height: full.height))
-            }
-            return ContextPacket(appName: appName, selectionImage: try jpeg(cropped), screenImage: try jpeg(outlined),
-                                 selectedText: selected.joined(separator: "\n"),
-                                 screenText: all.joined(separator: "\n"), redactions: hits)
+            return ContextPacket(appName: appName, redacted: try content(redacted, selected, all),
+                                 raw: try content(shot, rawSelected, rawAll), redactions: hits)
         }.value
     }
 

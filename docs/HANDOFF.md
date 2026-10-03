@@ -12,11 +12,17 @@ Phase 1 adds:
 - **Settings…** in the menu (⌘,): provider, model, address, "can see images", API key → Keychain (service `ie.dublinhacx.glance`, account = provider id).
 - Panel is a **chat thread**: streamed answers, Explain more / Example follow-ups, Stop, typed follow-up questions. A new selection starts a new thread.
 
+## After the Phase 1 gate (owner request, 2026-10-03)
+- Redaction widened (see DECISIONS.md "Redaction rules"). 80 selftest checks, including product-page lines that must stay untouched.
+- Override: if the question explicitly asks to see hidden data ("don't redact", "unredact", "show the hidden email", "it's okay to see my address"), `send()` uses the raw copy kept in memory. It stays on until the next selection, and the preview shows ⚠️ Not redacted. Excluded apps stay excluded.
+- `testdata/product.html` has a fake "Account details" block for testing.
+- Known limits: single first names aren't caught (two-word names only, so day names like "Tue" aren't flagged); famous people's names are redacted too; addresses without a street-type word or Eircode are missed.
+
 ## Phase 1 gate checklist (owner)
 - [x] `./scripts/selftest.sh` passes (redactor + request format per provider)
 - [x] DeepSeek key saved in Settings (Azure endpoint, model `DeepSeek-V4.1-Flash`, images off)
 - [ ] Claude / OpenAI: run the same check once keys are added
-- [x] (DeepSeek) `open demo/product.html` in Safari (a fake laptop page). ⌥Space → drag over the Memory/Storage rows → ask "Is 16 GB enough for college?" → grounded answer streams in, quoting the spec. Repeat per provider.
+- [x] (DeepSeek) `open testdata/product.html` in Safari (a fake laptop page). ⌥Space → drag over the Memory/Storage rows → ask "Is 16 GB enough for college?" → grounded answer streams in, quoting the spec. Repeat per provider.
 - [x] Drag over the "Saved payment" line → the preview shows `[CARD]` and `[EMAIL]` and "Hid 2 sensitive item(s)", and the thumbnail shows a black box.
 - [ ] (not reported yet) Try "Explain more" and "Example", and a typed follow-up.
 - [ ] Ollama: not installed, so skipped.

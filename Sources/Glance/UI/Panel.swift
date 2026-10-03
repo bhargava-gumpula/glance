@@ -81,7 +81,10 @@ final class ChatModel: ObservableObject {
 
     let mode = Mode.explain
     private var capture: Task<ContextPacket?, Never>?
+    /// The user's own words and the answers; ContextPacket.send() redacts and attaches the screen.
     private var history: [ChatMessage] = []
+    /// Set once the user explicitly asks to see hidden data; lasts until the next selection.
+    private var revealed = false
     private var answering: Task<Void, Never>?
 
     /// A new selection starts a new conversation.
@@ -89,6 +92,7 @@ final class ChatModel: ObservableObject {
         stop()
         turns = []
         history = []
+        revealed = false
         let center = NSPoint(x: rect.midX, y: rect.midY)
         let app = Exclusions.app(at: center)
         if Exclusions.isExcluded(app) {
@@ -139,11 +143,18 @@ final class ChatModel: ObservableObject {
                 return
             }
             let packet = await capture?.value
-            let (message, answer) = ContextPacket.send(packet, question: question, history: history, mode: mode,
-                                                       provider: provider) { preview in
+            let reveal = revealed || Redactor.userAskedToReveal(question)
+            let announce = history.isEmpty || (reveal && !revealed)
+            revealed = reveal
+            let answer = ContextPacket.send(packet, history: history, question: question, reveal: reveal,
+                                            announce: announce, mode: mode, provider: provider) { preview in
                 var text = "Sending to \(preview.providerName): "
                 text += preview.imagesSent ? "selection + screen images, and the text below." : "on-screen text only (image stays on this Mac)."
-                text += preview.redactions > 0 ? "\n🔒 Hid \(preview.redactions) sensitive item(s)." : "\nNo sensitive items found."
+                if preview.revealed {
+                    text += "\n⚠️ Not redacted: you asked Glance to look at hidden data (until your next selection)."
+                } else {
+                    text += preview.redactions > 0 ? "\n🔒 Hid \(preview.redactions) sensitive item(s)." : "\nNo sensitive items found."
+                }
                 text += "\nSelected text:\n" + (preview.selectedText.isEmpty ? "(none found)" : preview.selectedText)
                 turns.append(Turn(kind: .preview, text: text, image: preview.image))
             }
@@ -151,7 +162,7 @@ final class ChatModel: ObservableObject {
             let index = turns.count - 1
             do {
                 for try await delta in answer { turns[index].text += delta }
-                history += [message, ChatMessage(role: .assistant, text: turns[index].text)]
+                history += [ChatMessage(role: .user, text: question), ChatMessage(role: .assistant, text: turns[index].text)]
             } catch is CancellationError {
             } catch {
                 if turns[index].text.isEmpty { turns.remove(at: index) }

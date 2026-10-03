@@ -1,19 +1,51 @@
 import Foundation
+import NaturalLanguage
 
-/// Phase 1 redaction: card numbers (Luhn-checked), emails and API keys.
-/// Phase 4 moves the rules to Resources/redaction.json and adds IBAN, PPSN, JWTs, etc.
+/// Replaces sensitive values with tags like [CARD]. Runs on-device before anything is sent.
+/// Rules are checked in order; earlier rules win (keys before cards, cards before phone numbers).
+/// Phase 4 may move the patterns to Resources/redaction.json.
 enum Redactor {
     private struct Rule {
-        let label: String
+        let tag: String
         let regex: NSRegularExpression
+        /// Capture group to replace (0 = whole match). Label rules keep the label and hide the value.
+        var group = 0
         var isMatch: (String) -> Bool = { _ in true }
     }
 
-    // Order matters: keys before cards so long digit runs inside keys aren't split.
     private nonisolated(unsafe) static let rules: [Rule] = [
-        Rule(label: "[KEY]", regex: re(#"\b(?:sk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{36,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35})"#)),
-        Rule(label: "[EMAIL]", regex: re(#"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"#)),
-        Rule(label: "[CARD]", regex: re(#"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)"#), isMatch: { luhn($0.filter(\.isNumber)) }),
+        // Secrets
+        Rule(tag: "[KEY]", regex: re(#"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)"#)),
+        Rule(tag: "[KEY]", regex: re(#"\b(?:sk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}|(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{16,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{40,}|glpat-[A-Za-z0-9_-]{20,}|hf_[A-Za-z0-9]{30,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35})"#)),
+        Rule(tag: "[TOKEN]", regex: re(#"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"#)),
+        Rule(tag: "[TOKEN]", regex: re(#"(?i)\bbearer\s+([A-Za-z0-9._~+/=-]{20,})"#), group: 1),
+        Rule(tag: "[SECRET]", regex: re(#"(?i)\b(?:password|passwd|pwd|passcode|pass code|secret|api[ _-]?key|access token|auth token|token|private key|seed phrase|recovery phrase|secret phrase|mnemonic|security answer)\b\s*[:=]\s*([^\n]+)"#), group: 1),
+        // Crypto wallets and private keys
+        Rule(tag: "[KEY]", regex: re(#"\b(?:0x)?[a-fA-F0-9]{64}\b"#)),
+        Rule(tag: "[WALLET]", regex: re(#"\b0x[a-fA-F0-9]{40}\b"#)),
+        Rule(tag: "[WALLET]", regex: re(#"(?i)\b(?:bc1|tb1|ltc1)[02-9ac-hj-np-z]{11,71}\b"#)),
+        Rule(tag: "[WALLET]", regex: re(#"\b[1-9A-HJ-NP-Za-km-z]{26,95}\b"#), isMatch: isMixedBase58),
+        // Bank and government IDs
+        Rule(tag: "[IBAN]", regex: re(#"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,4})?\b"#), isMatch: iban),
+        Rule(tag: "[EMAIL]", regex: re(#"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"#)),
+        Rule(tag: "[SSN]", regex: re(#"\b\d{3}-\d{2}-\d{4}\b"#)),
+        Rule(tag: "[PPSN]", regex: re(#"\b\d{7}[A-W][ABW]?\b"#), isMatch: ppsn),
+        Rule(tag: "[CARD]", regex: re(#"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)"#), isMatch: { luhn($0.filter(\.isNumber)) }),
+        // Labelled values: account numbers (bank, brokerage, crypto exchange), IDs, codes
+        Rule(tag: "[ID]", regex: re(#"(?i)\b(?:account|acct|a/c|sort code|routing|aba|bic|swift|member(?:ship)?|policy|passport|licen[cs]e|driver'?s licen[cs]e|customer|client|cvv2?|cvc|security code|pin|verification code|one[- ]time code|otp|2fa code|auth(?:entication)? code|tax id|ein|vat|nhs|medical record|patient|employee|student|portfolio|brokerage|wallet)\b(?:\s*(?:no\.?|number|num|#|id|code|address))?(?:\s+(?:is|was|ending in|ends in|ending))?\s*[:#=]?\s*(\d[\d -]{2,30}\d|[A-Z]{0,4}\d[A-Z0-9-]{2,40})"#), group: 1, isMatch: { $0.filter(\.isNumber).count >= 3 }),
+        Rule(tag: "[DOB]", regex: re(#"(?i)\b(?:date of birth|birth ?date|dob|born)\b\s*[:=]?\s*([^\n]+)"#), group: 1, isMatch: { $0.contains(where: \.isNumber) }),
+        Rule(tag: "[USERNAME]", regex: re(#"(?i)\b(?:user ?name|user ?id|login|log-in|account name|screen name|handle|signed in as|logged in as)\b\s*[:=]?\s*([^\s:=][^\n]*)"#), group: 1),
+        Rule(tag: "[NAME]", regex: re(#"(?i)\b(?:full name|first name|last name|surname|name on card|cardholder(?: name)?|account holder|mother'?s maiden name|recipient|ship to|bill to)\b\s*[:=]?\s*([^\s:=][^\n]*)"#), group: 1),
+        // Addresses
+        Rule(tag: "[ADDRESS]", regex: re(#"(?i)\b(?:home |billing |shipping |delivery |postal |mailing |street )?address(?: line ?\d)?\s*[:=]\s*([^\n]+)"#), group: 1),
+        Rule(tag: "[ADDRESS]", regex: re(#"\b\d{1,5}[A-Za-z]?,?\s+(?:[A-Z][a-zà-ÿ'’]+\s+){1,4}(?:Street|St|Road|Rd|Avenue|Ave|Lane|Ln|Drive|Dr|Court|Ct|Boulevard|Blvd|Way|Place|Pl|Terrace|Close|Crescent|Square|Sq|Park|Grove|Hill|Row|Quay|Parade|Gardens|Heights|Highway|Hwy)\b\.?"#)),
+        Rule(tag: "[ADDRESS]", regex: re(#"\b(?:Apt|Apartment|Unit|Suite|Flat)\.?\s*#?\s*\d+[A-Za-z]?\b"#)),
+        Rule(tag: "[ADDRESS]", regex: re(#"\b[AC-FHKNPRTV-Y]\d[0-9W] ?[0-9AC-FHKNPRTV-Y]{4}\b"#), isMatch: { $0.dropFirst(3).contains(where: \.isNumber) }), // Eircode
+        // Contact and network
+        Rule(tag: "[PHONE]", regex: re(#"(?<![\w+])\+?\(?\d[\d ().-]{7,18}\d(?![\w])"#), isMatch: isPhone),
+        Rule(tag: "[IP]", regex: re(#"\b(?:\d{1,3}\.){3}\d{1,3}\b"#), isMatch: { $0.split(separator: ".").allSatisfy { Int($0) ?? 999 <= 255 } }),
+        Rule(tag: "[USERNAME]", regex: re(#"(?<![\w.@])@[A-Za-z0-9_][A-Za-z0-9_.]{1,29}\b"#)),
+        Rule(tag: "[USERNAME]", regex: re(#"(?<=/Users/|/home/)[^/\s]+"#)),
     ]
 
     /// Returns the text with sensitive values replaced, and how many were replaced.
@@ -23,14 +55,42 @@ enum Redactor {
         for rule in rules {
             let ns = out as NSString
             for m in rule.regex.matches(in: out, range: NSRange(location: 0, length: ns.length)).reversed() {
-                let found = ns.substring(with: m.range)
+                let range = m.range(at: rule.group)
+                guard range.location != NSNotFound else { continue }
+                let found = ns.substring(with: range)
                 guard rule.isMatch(found) else { continue }
-                out = (out as NSString).replacingCharacters(in: m.range, with: rule.label)
+                out = (out as NSString).replacingCharacters(in: range, with: rule.tag)
                 hits += 1
             }
         }
-        return (out, hits)
+        let names = redactNames(out)
+        return (names.text, hits + names.hits)
     }
+
+    /// Personal names, found by Apple's on-device NaturalLanguage tagger.
+    private static func redactNames(_ text: String) -> (text: String, hits: Int) {
+        let tagger = NLTagger(tagSchemes: [.nameType])
+        tagger.string = text
+        var ranges: [Range<String.Index>] = []
+        tagger.enumerateTags(in: text.startIndex..<text.endIndex, unit: .word, scheme: .nameType,
+                             options: [.omitWhitespace, .omitPunctuation, .joinNames]) { tag, range in
+            // Two or more words only: single words ("Tue", "Mark") are too often not names.
+            if tag == .personalName, text[range].contains(" ") { ranges.append(range) }
+            return true
+        }
+        var out = text
+        for range in ranges.reversed() { out.replaceSubrange(range, with: "[NAME]") }
+        return (out, ranges.count)
+    }
+
+    /// True when the user explicitly asks Glance to look at data it would otherwise hide.
+    static func userAskedToReveal(_ question: String) -> Bool {
+        revealRegex.firstMatch(in: question, range: NSRange(location: 0, length: (question as NSString).length)) != nil
+    }
+
+    private nonisolated(unsafe) static let revealRegex = re(#"(?i)\b(?:don'?t|do not|no need to|stop|without)\s+(?:redact|redacting|hide|hiding|censor|censoring|mask|masking|black(?:ing)? out)|\bun-?redact|\bunhide\b|\bunmask\b|\bno redaction\b|\bredaction off\b|\b(?:show|read|look at|see|use|include|tell me)\b.{0,40}\b(?:redacted|hidden|censored|masked|blacked[- ]out)\b|\b(?:it'?s|its|that'?s)\s+(?:ok|okay|fine|alright)\s+(?:to|for you to)\s+(?:see|read|look|use|share)"#)
+
+    // MARK: Validators
 
     static func luhn(_ digits: String) -> Bool {
         guard (13...19).contains(digits.count) else { return false }
@@ -41,6 +101,43 @@ enum Redactor {
             sum += d
         }
         return sum % 10 == 0
+    }
+
+    /// IBAN mod-97 check.
+    static func iban(_ raw: String) -> Bool {
+        let s = raw.filter { !$0.isWhitespace }.uppercased()
+        guard (15...34).contains(s.count) else { return false }
+        let rearranged = s.dropFirst(4) + s.prefix(4)
+        var remainder = 0
+        for ch in rearranged {
+            guard let v = ch.isNumber ? ch.wholeNumberValue : (ch.asciiValue.map { Int($0) - 55 }) else { return false }
+            for d in String(v) { remainder = (remainder * 10 + d.wholeNumberValue!) % 97 }
+        }
+        return remainder == 1
+    }
+
+    /// Irish PPS number check character (weights 8..2 over 7 digits, 9 x the optional second letter, mod 23).
+    static func ppsn(_ s: String) -> Bool {
+        let chars = Array(s.uppercased())
+        guard chars.count >= 8 else { return false }
+        var sum = 0
+        for i in 0..<7 { sum += (chars[i].wholeNumberValue ?? 0) * (8 - i) }
+        if chars.count == 9, chars[8] != "W", let a = chars[8].asciiValue { sum += 9 * Int(a - 64) }
+        let check = sum % 23
+        let expected: Character = check == 0 ? "W" : Character(UnicodeScalar(64 + check)!)
+        return chars[7] == expected
+    }
+
+    private static func isPhone(_ s: String) -> Bool {
+        let digits = s.filter(\.isNumber).count
+        guard (9...15).contains(digits) else { return false }
+        if s.hasPrefix("+") || s.hasPrefix("(") || s.hasPrefix("0") { return true }
+        return s.range(of: #"^\d{3}[-. ]\d{3}[-. ]\d{4}$"#, options: .regularExpression) != nil
+    }
+
+    /// Base58 wallet addresses mix digits, upper and lower case; plain words don't.
+    private static func isMixedBase58(_ s: String) -> Bool {
+        s.contains(where: \.isNumber) && s.contains(where: \.isUppercase) && s.contains(where: \.isLowercase)
     }
 
     private static func re(_ pattern: String) -> NSRegularExpression {
