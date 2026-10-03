@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotkey: Hotkey!
     private let panel = PanelController()
     private let onboarding = OnboardingController()
+    private let settings = SettingsController()
 
     static func main() {
         if CommandLine.arguments.contains("--selftest") { SelfTest.run() }
@@ -23,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let menu = NSMenu()
         menu.addItem(withTitle: "Show Glance (\(Config.hotkeyDescription))", action: #selector(togglePanel), keyEquivalent: "")
+        menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
         menu.addItem(withTitle: "Permissions…", action: #selector(showOnboarding), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Glance", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -36,4 +38,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func togglePanel() { panel.toggle() }
     @objc private func showOnboarding() { onboarding.show() }
+    @objc private func showSettings() { settings.show() }
 }

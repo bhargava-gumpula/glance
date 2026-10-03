@@ -25,6 +25,55 @@ enum Config {
         ])
     }
 
+    // MARK: AI providers
+
+    struct ProviderPreset: Sendable {
+        enum Kind: Sendable { case anthropic, openAICompat }
+        let id: String
+        let name: String
+        let kind: Kind
+        let baseURL: String
+        let model: String
+        let supportsImages: Bool
+        let needsKey: Bool
+    }
+
+    static let providerPresets: [ProviderPreset] = [
+        .init(id: "claude", name: "Claude", kind: .anthropic,
+              baseURL: "https://api.anthropic.com", model: "claude-opus-5-5", supportsImages: true, needsKey: true),
+        // deepseek-chat is text-only, so it gets the OCR text of the screen instead of images.
+        .init(id: "deepseek", name: "DeepSeek", kind: .openAICompat,
+              baseURL: "https://api.deepseek.com", model: "deepseek-chat", supportsImages: false, needsKey: true),
+        .init(id: "openai", name: "OpenAI", kind: .openAICompat,
+              baseURL: "https://api.openai.com/v1", model: "gpt-5", supportsImages: true, needsKey: true),
+        // Ollama's OpenAI-compatible endpoint. LM Studio: http://localhost:1234/v1
+        .init(id: "local", name: "Local (Ollama / LM Studio)", kind: .openAICompat,
+              baseURL: "http://localhost:11434/v1", model: "qwen2.5vl", supportsImages: true, needsKey: false),
+    ]
+
+    static func preset(_ id: String) -> ProviderPreset {
+        providerPresets.first { $0.id == id } ?? providerPresets[0]
+    }
+    static func model(for id: String) -> String { value("model.\(id)", default: preset(id).model) }
+    static func baseURL(for id: String) -> String { normalizedBaseURL(value("baseURL.\(id)", default: preset(id).baseURL)) }
+
+    /// Accepts a pasted full endpoint: keeps the first line, drops a trailing slash and endpoint path.
+    static func normalizedBaseURL(_ raw: String) -> String {
+        var url = raw.split(whereSeparator: \.isNewline).first.map(String.init)?
+            .trimmingCharacters(in: .whitespaces) ?? ""
+        for suffix in ["/", "/chat/completions", "/v1/messages", "/"] where url.hasSuffix(suffix) {
+            url.removeLast(suffix.count)
+        }
+        return url
+    }
+    static func supportsImages(for id: String) -> Bool { value("supportsImages.\(id)", default: preset(id).supportsImages) }
+
+    /// Claude effort. "low" keeps the panel snappy; raise for harder questions.
+    static var claudeEffort: String { value("claudeEffort", default: "low") }
+    static let maxOutputTokens = 16000
+    /// Longest side of images sent to a provider, in pixels.
+    static let maxImageDimension = 1568
+
     private static func value<T>(_ key: String, default fallback: T) -> T {
         UserDefaults.standard.object(forKey: key) as? T ?? fallback
     }
