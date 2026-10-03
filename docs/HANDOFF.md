@@ -113,7 +113,13 @@ Built so far:
 - [ ] A Safari private window adds zero rows (private detection is UNVERIFIED; see below).
 - [ ] CPU: `top -pid $(pgrep -x Glance) -l 20 -s 3 | grep -E '^ *[0-9]+ +Glance'` while browsing, and while idle.
 
+### Phase 3 review fixes (after three parallel reviews: privacy, CPU, correctness)
+- Privacy: an incomplete browser AX walk counts as private (skipped); a browser page without a URL is skipped; the AX cache is keyed on the window element (a private and a normal window with the same title no longer share it); the captured window must match the AX focused window's frame; Pause/Forget can't be undone by a capture in flight; a question waiting on an old selection can't overwrite a new one; the memory folder is excluded from Time Machine.
+- CPU: AX calls time out after 0.25 s (a hung app can't freeze Glance); a 256 px capture decides whether anything changed (no full capture or window enumeration on idle ticks); OCR capped at 1920 pt, no language correction; OCR backs off up to 30 s on windows whose pixels change but text doesn't (video, spinners); no capture while the display sleeps or the screen is locked; `synchronous=NORMAL`; trims run off the main thread.
+- A19 (audit): the demo note's "Budget: €1,200 max" line was dropped (it shares no word with laptop specs). Short windows are now sent whole, the 50-row cap before de-duplication is gone, and "the earlier ones" questions fall back to recent windows. Selftest uses the real `demo/budget-note.txt` and fails without the fix.
+
 ### Phase 3 gotchas / open items
+- **OCR warm-up flake (also on main):** about 1 in 6 cold runs, the first Vision call in a process returns nothing and **every later OCR call in that process also returns nothing** (both "OCR warm-up actually runs recognition" and "OCR reads a 1× frame" fail together). The next run is cold again (≈60 s), so the failed run didn't finish the model load. In the app, this would mean no OCR for the whole session (empty selections, empty memory). Proposal in the report to the orchestrator.
 - Safari/Chrome private-window detection is UNVERIFIED: Glance looks for "Private Browsing", "Incognito", "InPrivate" in the window title and browser chrome. A browser window it can't read through Accessibility is treated as private (skipped). If Safari pages never get stored, the menu says "not saving (private window)"; tell the agent.
 - Safari URL via `AXDocument`/`AXWebArea AXURL` is UNVERIFIED; without a URL, the blocklist still checks the window title.
 - `IsSecureEventInputEnabled()` is system-wide: an app that leaves Secure Keyboard Entry on (Terminal's option, some password managers) pauses memory; the menu shows "not saving (password field)".

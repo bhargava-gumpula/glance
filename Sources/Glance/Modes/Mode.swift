@@ -1,4 +1,4 @@
-/// Modes register here: one file per mode (`Modes/<Mode>.swift`) plus one line in `all`.
+/// Modes register here (Explain now; Guide and Do in later phases).
 struct Mode: Sendable {
     struct FollowUp: Sendable {
         let label: String
@@ -8,8 +8,6 @@ struct Mode: Sendable {
     let name: String
     let system: String
     let followUps: [FollowUp]
-    /// Picks this mode for a typed or spoken question. nil: only the default (Explain).
-    var matches: (@Sendable (String) -> Bool)? = nil
 
     static let explain = Mode(
         name: "Explain",
@@ -33,8 +31,5 @@ struct Mode: Sendable {
         ]
     )
 
-    /// First match wins; Explain is the default.
-    static let all = [recap, saveComparison, explain]
-
-    static func forQuestion(_ q: String) -> Mode { all.first { $0.matches?(q) == true } ?? explain }
+    static let all = [explain]
 }
