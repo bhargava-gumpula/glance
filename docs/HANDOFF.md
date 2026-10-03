@@ -72,6 +72,7 @@ Built so far:
 - **OCR warm-up:** `OCR.warmUp()` runs one tiny OCR in the background at launch. Timing goes to the log (below). Measured: 0.1 s inside the app right after a run; a fresh CLI process (`--selftest`) still pays ~27 s cold every time, so the selftest takes about half a minute.
 - **Hold ⌥Space to talk** (≥ 0.3 s; a shorter tap toggles the panel as before, now on key-up). Recording starts on key-down so the first word isn't clipped; the panel shows "Listening…" then "Transcribing…". Holding again stops the current spoken answer (barge-in) and a spoken question replaces one still being answered.
 - **Speech-to-text:** `Voice/Voice.swift`, protocol `SpeechToText`: ElevenLabs `scribe_v2` (16 kHz mono WAV, 6 s timeout) → on any failure Apple `SFSpeechRecognizer` (on-device when supported). Without an ElevenLabs key it's Apple only. Questions transcribed on-device show "(on-device)".
+- **Spoken vs on-screen answers (owner request):** every answer opens with a "Say: …" line (1-2 short sentences) that is read aloud and hidden; the full, more detailed answer is shown on screen. If a model skips the line, the start of the answer is spoken instead (`Voice.splitSpoken`, `Speaker.answer`, prompt in `Modes/Mode.swift`).
 - **Spoken answers:** protocol `TextToSpeech`: ElevenLabs HTTP stream (`eleven_flash_v2_5`, `pcm_24000`) per sentence, started as soon as the first full sentence arrives, played through `PCMPlayer` (`Voice/Audio.swift`). Short version only: first sentence plus more while under 280 characters; markdown stripped. TTS failure → silent, text only. Speaker button in the panel mutes (`ttsEnabled`).
 - **Settings → Voice:** ElevenLabs key (Keychain account `elevenlabs`, read once per launch) and Voice ID.
 - Voice audio goes to ElevenLabs; screen content still only leaves through `ContextPacket.send()`.
@@ -86,7 +87,7 @@ Built so far:
 - [ ] Owner: Wi-Fi off → hold ⌥Space → question shows "(on-device)" (macOS asks for Speech Recognition the first time); the answer then needs a provider that works offline, or shows the network error as text
 
 ### Phase 2 gotchas
-- Xcode is now installed but its license isn't accepted, so `swift build` fails with the default developer dir. Owner: `sudo xcodebuild -license accept`. Until then: `DEVELOPER_DIR=/Library/Developer/CommandLineTools ./scripts/build-app.sh`.
+- Xcode is installed and its license accepted (2026-10-03); `swift build` uses it. SwiftUI macros may now compile, but the code still uses the ObservableObject pattern.
 - Recording starts on every key-down, so a quick tap shows the orange mic dot for a moment.
 - The default voice ID is the premade "Rachel"; if the account doesn't have it, TTS fails silently (log shows HTTP 4xx). Paste another voice ID in Settings.
 - `pcm_24000` on the free tier is UNVERIFIED; if TTS gets HTTP 4xx, try `pcm_22050` (change `PCMPlayer.sampleRate` too).

@@ -31,7 +31,7 @@ Phase 1's check passed (owner-approved 2026-10-03). Everything is pushed to the 
 - Update `docs/HANDOFF.md`, commit, push.
 
 ## When done, report back
-SendMessage to the session named **"planning idea"** (the lead chat) with:
+SendMessage to the session named **"Orchastrator"** (the lead chat) with:
 - what changed
 - the commit hash(es)
 - each check item, pass/fail

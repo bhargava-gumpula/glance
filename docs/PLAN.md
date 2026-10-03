@@ -109,6 +109,11 @@ glance/
 - No outbound traffic in local-only mode.
 
 ### Phase 5 — Guide v1: one highlighted step (≈1 h)
+- **UI direction change (owner, 2026-10-03): Glance's face is Pip, an 8-bit penguin pet** (branch `ui`, commit ee60b4b, file `UI/Pet.swift`). Pip sits bottom-right, reacts while listening, thinking and answering, shows answers in a speech bubble, and flies next to the selection. Clicking it opens the chat panel, which stays as the fallback. **Guide v1/v2 must use Pip's API, not draw their own highlight:**
+  - `panelController.pet.point(at: CGRect, ring: Bool = true)`: Cocoa screen coordinates (origin bottom-left, same as PointTool). **AX and Vision boxes are top-left/normalized, so flip them first.**
+  - `pet.say(String)`: text in the bubble
+  - `pet.goHome()`: back to its corner
+  - Until `ui` merges into main, keep Guide's highlight behind one function so switching to `pet.point` is a one-line change.
 - *"Show me how to export this as a PDF."* → the model names the next control → Glance finds it via its Accessibility element or OCR text match → draws a ring and arrow on it, with a one-line instruction (also spoken).
 - When you click and ask "next", it takes a fresh screenshot and highlights the following step.
 - **Full-screen send (needed since commit 17ebe21):** Phase 1 sends only the selected box, never the rest of the screen. Guide has to see the whole screen to find the next control, so it gets its own explicit path: the user starts Guide → Glance shows a "Guide will send your whole screen (redacted)" preview → the user confirms → the full screen goes through `ContextPacket.send()` with the same exclusions, redaction and blackout. Explain stays selection-only. Excluded apps are still masked out of the full-screen capture.
