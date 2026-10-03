@@ -15,7 +15,25 @@ struct ContextPacket: Sendable {
     let redacted: Content
     /// Unredacted copy, kept in memory only. Sent only when the user explicitly asks Glance to look at hidden data.
     let raw: Content
-    let redactions: Int
+    var redactions: Int
+    /// Earlier snippets from the on-device timeline that match the question, already redacted.
+    /// Always redacted, even when the user asks to reveal the selection. Empty unless a question was asked.
+    var memory = ""
+
+    /// Adds matching timeline snippets, redacted here, before anything can reach `send()`.
+    func withMemory(_ snippets: [Timeline.Snippet], now: Date = Date()) -> ContextPacket {
+        var copy = self
+        var hits = 0
+        copy.memory = snippets.map { s in
+            let mins = max(0, Int(now.timeIntervalSince1970 - s.ts) / 60)
+            let header = [s.app, s.title, s.url.flatMap { URL(string: $0)?.host() }].compactMap { $0 }.joined(separator: " · ")
+            let r1 = Redactor.redact(header), r2 = Redactor.redact(s.text)
+            hits += r1.hits + r2.hits
+            return "[\(mins) min ago] \(r1.text)\n\(r2.text)"
+        }.joined(separator: "\n\n")
+        copy.redactions += hits
+        return copy
+    }
 
     /// What the user sees before anything goes out.
     struct Preview {
@@ -24,6 +42,7 @@ struct ContextPacket: Sendable {
         let image: NSImage?
         let imagesSent: Bool
         let selectedText: String
+        let memory: String
         let redactions: Int
         let revealed: Bool
     }
@@ -47,7 +66,7 @@ struct ContextPacket: Sendable {
             turns[first] = packet.firstMessage(content, question: turns[first].text, imagesAllowed: provider.supportsImages)
             if announce {
                 showPreview(Preview(providerName: provider.name, image: NSImage(data: content.selectionImage),
-                                    imagesSent: provider.supportsImages, selectedText: content.selectedText,
+                                    imagesSent: provider.supportsImages, selectedText: content.selectedText, memory: packet.memory,
                                     redactions: reveal ? 0 : packet.redactions + questionHits, revealed: reveal))
             }
         }
@@ -55,8 +74,11 @@ struct ContextPacket: Sendable {
     }
 
     func firstMessage(_ content: Content, question: String, imagesAllowed: Bool) -> ChatMessage {
-        let text = "App: \(appName)\nText in my selection (OCR):\n\(content.selectedText.isEmpty ? "(none)" : content.selectedText)\n"
-            + "\nMy question: \(question)"
+        var text = "App: \(appName)\nText in my selection (OCR):\n\(content.selectedText.isEmpty ? "(none)" : content.selectedText)\n"
+        if !memory.isEmpty {
+            text += "\nWhat I looked at earlier on this Mac (Glance's on-device memory, matching lines only):\n\(memory)\n"
+        }
+        text += "\nMy question: \(question)"
         return ChatMessage(role: .user, text: text, images: imagesAllowed ? [content.selectionImage] : [])
     }
 

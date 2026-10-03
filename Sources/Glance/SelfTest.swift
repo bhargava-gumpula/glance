@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 /// `Glance --selftest`: assert-style checks, non-zero exit on failure.
 /// Each phase adds its checks here.
@@ -222,9 +222,150 @@ enum SelfTest {
               "sentences: splits on end marks and newlines, not decimals")
         check(Voice.speakable("**16 GB** is `enough`") == "16 GB is enough", "speakable: markdown dropped")
 
+        // Phase 3: timeline (temp database)
+        let dbPath = NSTemporaryDirectory() + "glance-selftest-\(getpid()).sqlite"
+        defer { for ext in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: dbPath + ext) } }
+        let now = Date().timeIntervalSince1970
+        do {
+            let tl = try Timeline(path: dbPath)
+            check(tl.version == Timeline.schemaVersion, "timeline: migrated to schema \(Timeline.schemaVersion)")
+            let perms = (try? FileManager.default.attributesOfItem(atPath: dbPath)[.posixPermissions] as? Int) ?? 0
+            check(perms == 0o600, "timeline: database file is 0600")
+            let thumb = MemoryRecorder.thumbnail(page(["Thumb"], width: 1440, height: 900))
+            try tl.insert(ts: now - 600, app: "Safari", bundleID: "com.apple.Safari", title: "ThinkPad X1 Carbon",
+                          url: "https://www.lenovo.com/ie/en/thinkpad", text: "ThinkPad X1 Carbon\n32GB memory\nBattery up to 15 hours\n€1,899", thumb: thumb)
+            try tl.insert(ts: now - 400, app: "Safari", bundleID: "com.apple.Safari", title: "Zenbook 14",
+                          url: "https://www.asus.com/ie/zenbook", text: "ASUS Zenbook 14 OLED\n16GB memory\nBattery 75Wh\n€1,099", thumb: thumb)
+            try tl.insert(ts: now - 200, app: "Notes", bundleID: "com.apple.Notes", title: "Notes", url: nil,
+                          text: "Laptop for college\nBudget: €1,200 max\nNeeds: 16GB RAM, light to carry, good battery for lectures.", thumb: thumb)
+            try tl.insert(ts: now - 100, app: "Slack", bundleID: "com.tinyspeck.slackmacgap", title: "general", url: nil,
+                          text: "lunch at 1?", thumb: thumb)
+            check(try tl.count() == 4 && (try tl.count(matching: "\"battery\"")) == 3, "timeline: FTS5 insert and search")
+
+            // Reopen: migrations don't rerun, rows survive.
+            let tl2 = try Timeline(path: dbPath)
+            check(try tl2.version == 1 && tl2.count() == 4, "timeline: reopening keeps rows and schema")
+
+            let q = "How is this different from the earlier ones?"
+            check(Timeline.terms(from: [q]).isEmpty, "memory terms: a vague question adds no search words")
+            let selection = "MacBook Air 13-inch\n16GB unified memory\nUp to 18 hours battery life\n€1,199"
+            let terms = Timeline.terms(from: [q, selection])
+            let found = try tl.snippets(matching: terms, since: now - 900)
+            check(Set(found.map(\.title)) == ["ThinkPad X1 Carbon", "Zenbook 14", "Notes"],
+                  "memory: the question + selection finds both laptops and the budget note, not Slack")
+            check(found.first { $0.app == "Notes" }?.text.contains("Budget: €1,200") == true
+                  || found.first { $0.app == "Notes" }?.text.contains("16GB RAM") == true, "memory: snippet keeps the matching lines")
+            check((try? tl.snippets(matching: ["a\"b", "c*", "NEAR(", "-x"], since: 0)) != nil, "memory: FTS query is escaped")
+            check(try tl.snippets(matching: terms, since: now - 300).count == 1, "memory: only the retention window is searched")
+
+            try tl.trim(olderThan: now - 500)
+            check(try tl.count() == 3 && (try tl.count(matching: "\"thinkpad\"")) == 0, "retention: old rows and FTS entries deleted")
+            try tl.forget(since: now - 250)
+            check(try tl.count() == 1 && (try tl.count(matching: "\"budget\"")) == 0 && (try tl.count(matching: "\"lunch\"")) == 0,
+                  "forget: rows and FTS entries since the cut-off deleted")
+            try tl.forget(since: 0)
+            check(try tl.count() == 0, "forget: empty after forgetting everything")
+        } catch {
+            check(false, "timeline: \(error.localizedDescription)")
+        }
+
+        // Phase 3: exclusions before capture
+        func skip(_ id: String?, title: String? = nil, url: String? = nil, priv: Bool? = false, secure: Bool = false) -> String? {
+            Exclusions.memorySkipReason(.init(bundleID: id, title: title, url: url, isPrivate: priv, secureInput: secure))
+        }
+        check(skip("com.1password.1password") == "excluded app", "exclusion: password manager")
+        check(skip("com.apple.keychainaccess") == "excluded app", "exclusion: Keychain Access")
+        check(skip(Config.bundleID) == "Glance itself", "exclusion: Glance's own windows")
+        check(skip("com.apple.Notes", secure: true) == "password field", "exclusion: secure field focused")
+        check(skip("com.apple.Safari", url: "https://apple.com", secure: true) == "password field", "exclusion: secure field in a browser")
+        check(skip("com.apple.Safari", url: "https://www.apple.com/ie/macbook-air/specs/") == nil, "allowed: normal product page")
+        check(skip("com.apple.Notes", title: "Notes", priv: nil) == nil, "allowed: Notes (not a browser)")
+        check(skip("com.apple.Safari", url: "https://apple.com", priv: nil) == "private window", "exclusion: browser window we can't read")
+        check(skip("com.google.Chrome", url: "https://apple.com", priv: true) == "private window", "exclusion: incognito window")
+        check(Exclusions.looksPrivate("Private Browsing") && Exclusions.looksPrivate("New Incognito Tab")
+              && !Exclusions.looksPrivate("MacBook Air - Apple (IE)"), "private markers")
+        for url in ["https://www.aib.ie/personal", "https://www.paypal.com/myaccount", "https://shop.com/checkout/step2",
+                    "https://accounts.google.com/v3/signin", "file:///Users/x/glance/demo/mock-bank.html",
+                    "https://www.revolut.com/app", "https://site.ie/login?next=/"] {
+            check(skip("com.apple.Safari", url: url) == "blocked site", "URL blocklist: \(url)")
+        }
+        check(skip("com.apple.Safari", title: "Sign in – Google Accounts", url: nil) == "blocked site", "URL blocklist: by title")
+        check(skip("com.apple.Safari", url: "https://www.asus.com/ie/laptops/for-home/zenbook/") == nil,
+              "URL blocklist: no false hit on a laptop page")
+
+        // Phase 3: change detection and thumbnails
+        let pageA = page(["MacBook Air", "16 GB unified memory", "18-hour battery"], width: 1440, height: 900)
+        let pageB = page(["ThinkPad X1 Carbon", "32 GB memory", "Intel Core Ultra 7", "€1,899"], width: 1440, height: 900)
+        let sigA = MemoryRecorder.signature(pageA)
+        check(!MemoryRecorder.changed(sigA, MemoryRecorder.signature(pageA)), "change detection: same frame is skipped")
+        check(MemoryRecorder.changed(sigA, MemoryRecorder.signature(pageB)), "change detection: different page is stored")
+        let scrolled = page(["16 GB unified memory", "18-hour battery", "512 GB SSD"], width: 1440, height: 900)
+        check(MemoryRecorder.changed(sigA, MemoryRecorder.signature(scrolled)), "change detection: scrolled text is stored")
+        let caret = page(["MacBook Air", "16 GB unified memory", "18-hour battery|"], width: 1440, height: 900)
+        check(!MemoryRecorder.changed(sigA, MemoryRecorder.signature(caret)), "change detection: a caret blink is skipped")
+        check(MemoryRecorder.changed([], sigA), "change detection: first frame is stored")
+        let thumbData = MemoryRecorder.thumbnail(pageA) ?? Data()
+        let thumbImg = NSBitmapImageRep(data: thumbData)
+        check(thumbImg?.pixelsWide == Config.thumbnailMaxDimension && thumbData.count < 40_000,
+              "thumbnail: \(thumbImg?.pixelsWide ?? 0) px wide, \(thumbData.count / 1024) kB (never full frames)")
+
+        // Phase 3: memory snippets are redacted before they reach the packet, and stay redacted on reveal
+        let secretSnippet = Timeline.Snippet(ts: now - 120, app: "Safari", title: "Order for Aoife Kelly",
+                                             url: "https://shop.ie/orders", text: "Card 4242 4242 4242 4242\nmail aoife.k@example.ie\n16GB memory")
+        let memPacket = packet.withMemory([secretSnippet], now: Date(timeIntervalSince1970: now))
+        check(memPacket.memory.contains("[CARD]") && memPacket.memory.contains("[EMAIL]") && !memPacket.memory.contains("4242")
+              && !memPacket.memory.contains("example.ie") && memPacket.memory.contains("16GB memory"),
+              "memory: snippet redacted inside the packet  →  \(memPacket.memory.replacingOccurrences(of: "\n", with: " | "))")
+        check(memPacket.memory.contains("[2 min ago]") && memPacket.redactions >= 2, "memory: age and redaction count")
+        check(memPacket.firstMessage(content, question: "q", imagesAllowed: false).text.contains("[CARD]"),
+              "memory: first message carries the redacted snippets")
+        let memSent: String = {
+            let recorder = RecordingProvider()
+            let done = DispatchSemaphore(value: 0)
+            MainActor.assumeIsolated {
+                let stream = ContextPacket.send(memPacket, history: [], question: "Don't redact", reveal: true, announce: false,
+                                                mode: .explain, provider: recorder) { _ in }
+                Task.detached { for try await _ in stream {}; done.signal() }
+            }
+            _ = done.wait(timeout: .now() + 5)
+            return recorder.lastText
+        }()
+        check(memSent.contains("[CARD]") && !memSent.contains("4242"), "memory: stays redacted even when the user reveals")
+        check(ContextPacket(appName: "Safari", redacted: content, raw: content, redactions: 0).memory.isEmpty,
+              "memory: nothing from the timeline unless a question adds it")
+
+        // Phase 3: cost of one stored frame (signature + OCR + thumbnail), for the CPU estimate
+        let bench = page((1...40).map { "Line \($0): 16 GB unified memory, 512 GB SSD, 18-hour battery, Wi-Fi 6E, €1,299" },
+                         width: 1440, height: 900)
+        let t0 = Date()
+        _ = MemoryRecorder.signature(bench)
+        let t1 = Date()
+        let benchLines = (try? OCR.lines(in: bench)) ?? []
+        let t2 = Date()
+        _ = MemoryRecorder.thumbnail(bench)
+        let t3 = Date()
+        print(String(format: "      frame cost: signature %.1f ms, OCR %.0f ms (%d lines), thumbnail %.1f ms",
+                     t1.timeIntervalSince(t0) * 1000, t2.timeIntervalSince(t1) * 1000, benchLines.count, t3.timeIntervalSince(t2) * 1000))
+        check(benchLines.count >= 30, "OCR reads a 1× (1440×900) frame")
+
         print(failures == 0 ? "selftest: all passed" : "selftest: \(failures) failed")
         exit(failures == 0 ? 0 : 1)
     }
+}
+
+/// A white page with one line of black text per entry.
+private func page(_ lines: [String], width: Int, height: Int) -> CGImage {
+    let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                        space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+    ctx.setFillColor(.white)
+    ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
+    for (i, line) in lines.enumerated() {
+        NSAttributedString(string: line, attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.black])
+            .draw(at: NSPoint(x: 20, y: height - 30 - i * 21))
+    }
+    NSGraphicsContext.current = nil
+    return ctx.makeImage()!
 }
 
 private final class ResultBox: @unchecked Sendable { var value = "" }

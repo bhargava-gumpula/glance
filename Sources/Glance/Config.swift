@@ -39,6 +39,36 @@ enum Config {
         ])
     }
 
+    // MARK: Memory (Phase 3)
+
+    /// "Forget" in the menu deletes this many minutes back.
+    static let forgetMinutes = 15
+    /// Longest side of the stored thumbnail. Full frames are never stored.
+    static let thumbnailMaxDimension = 320
+    /// A frame counts as changed when more than this share of cells in a 128×72 grey copy changed by more than
+    /// 6 grey levels. A blinking caret touches 1–2 cells (0.02 %); scrolling or a new page touches hundreds.
+    static let frameChangeFraction = 0.003
+    /// At most this many earlier windows, and characters per window, go into a question.
+    static let memorySnippetLimit = 6
+    static let memorySnippetChars = 700
+    /// Browsers: private-window and URL checks apply to these.
+    static let browsers: Set<String> = [
+        "com.apple.Safari", "com.apple.SafariTechnologyPreview", "com.google.Chrome", "com.microsoft.edgemac",
+        "com.brave.Browser", "company.thebrowser.Browser", "org.mozilla.firefox", "com.vivaldi.Vivaldi", "com.operasoftware.Opera",
+    ]
+    /// Pages whose URL or window title contains any of these are never stored.
+    static var blockedURLKeywords: [String] {
+        value("blockedURLKeywords", default: [
+            "bank", "aib.ie", "boi.com", "ptsb.ie", "revolut.com", "n26.com", "monzo.com", "creditunion",
+            "paypal.", "stripe.com", "klarna.", "checkout", "payment", "/pay/", "billing", "wallet",
+            "login", "log-in", "signin", "sign-in", "sign in", "log in", "signup", "password", "2fa", "mfa",
+            "accounts.google.com", "appleid.apple.com", "account.apple.com", "login.microsoftonline.com",
+            "revenue.ie", "mygovid", "welfare.ie",
+        ])
+    }
+    /// Window or toolbar text that marks a private window.
+    static let privateWindowMarkers = ["private browsing", "incognito", "inprivate", "private window"]
+
     // MARK: AI providers
 
     struct ProviderPreset: Sendable {

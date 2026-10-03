@@ -8,6 +8,11 @@ final class PanelController {
     private let panel: NSPanel
     private let chat = ChatModel()
     private let pointTool = PointTool()
+    /// Phase 3 memory, searched only when the user asks.
+    var timeline: Timeline? {
+        get { chat.timeline }
+        set { chat.timeline = newValue }
+    }
 
     init() {
         panel = NSPanel(
@@ -120,6 +125,7 @@ final class ChatModel: ObservableObject {
         }
     }
     var onPoint: (() -> Void)?
+    var timeline: Timeline?
 
     let mode = Mode.explain
     private var capture: Task<ContextPacket?, Never>?
@@ -227,7 +233,14 @@ final class ChatModel: ObservableObject {
                 turns.append(Turn(kind: .notice, text: error.localizedDescription))
                 return
             }
-            let packet = await capture?.value
+            var packet = await capture?.value
+            if history.isEmpty, let p = packet, let timeline { // memory joins the first question only
+                let terms = Timeline.terms(from: [question, p.raw.selectedText])
+                let since = Date().timeIntervalSince1970 - Double(Config.retentionMinutes * 60)
+                let withMemory = p.withMemory((try? timeline.snippets(matching: terms, since: since)) ?? [])
+                packet = withMemory
+                capture = Task { withMemory } // follow-ups resend the same memory
+            }
             let reveal = revealed || Redactor.userAskedToReveal(question)
             let announce = history.isEmpty || (reveal && !revealed)
             revealed = reveal
@@ -241,6 +254,7 @@ final class ChatModel: ObservableObject {
                     text += preview.redactions > 0 ? "\n🔒 Hid \(preview.redactions) sensitive item(s)." : "\nNo sensitive items found."
                 }
                 text += "\nSelected text:\n" + (preview.selectedText.isEmpty ? "(none found)" : preview.selectedText)
+                if !preview.memory.isEmpty { text += "\n\nFrom your last \(Config.retentionMinutes) min (redacted):\n" + preview.memory }
                 turns.append(Turn(kind: .preview, text: text, image: preview.image))
             }
             turns.append(Turn(kind: .assistant, text: ""))
