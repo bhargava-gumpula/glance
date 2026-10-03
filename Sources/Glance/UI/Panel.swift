@@ -8,6 +8,7 @@ final class PanelController {
     private let panel: NSPanel
     private let chat = ChatModel()
     private let pointTool = PointTool()
+    let pet: PetController
 
     init() {
         panel = NSPanel(
@@ -22,14 +23,23 @@ final class PanelController {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.hidesOnDeactivate = false
         panel.contentView = NSHostingView(rootView: PanelView(chat: chat))
+        pet = PetController(chat: chat)
+        pet.show()
 
         chat.onPoint = { [weak self] in self?.pointTool.start() }
         pointTool.onSelect = { [weak self] rect, screen in
             guard let self else { return }
             self.chat.pointed(at: rect, on: screen)
+            self.pet.point(at: rect, ring: false)
             self.focusInput()
         }
         pointTool.onCancel = { [weak self] in self?.focusInput() }
+        pet.onTap = { [weak self] in self?.petTapped() }
+    }
+
+    /// Clicking Pip opens the chat to message it (or hides the chat).
+    private func petTapped() {
+        if panel.isVisible { panel.orderOut(nil) } else { show(pointing: false); focusInput() }
     }
 
     var isVisible: Bool { panel.isVisible }
@@ -68,6 +78,7 @@ final class PanelController {
         if panel.isVisible {
             panel.orderOut(nil)
             pointTool.clear()
+            pet.goHome()
         } else {
             show(pointing: true)
         }
