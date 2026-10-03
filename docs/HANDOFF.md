@@ -6,7 +6,7 @@
 
 Phase 1 adds:
 - ⌥Space shows the panel and starts the **PointTool**: drag a box over any app (Esc skips). The box stays highlighted and lets clicks through. The "Point" button in the panel starts a new one.
-- **ContextPacket** (`AI/ContextPacket.swift`): ScreenCaptureKit capture without Glance or excluded apps → on-device Vision OCR → **Redactor** → any OCR line with a hit is blacked out in the images. `ContextPacket.send()` is the only path that sends screen content; it redacts the question too and puts the "Sending to …" preview (thumbnail + text + "Hid N sensitive items") in the thread before the request starts.
+- **ContextPacket** (`AI/ContextPacket.swift`): ScreenCaptureKit capture of **only the selected region** (owner request; the rest of the screen is never captured or sent), without Glance or excluded apps → on-device Vision OCR → **Redactor** → any OCR line with a hit is blacked out in the images. `ContextPacket.send()` is the only path that sends screen content; it redacts the question too and puts the "Sending to …" preview (thumbnail + text + "Hid N sensitive items") in the thread before the request starts.
 - Pointing at an excluded app (`Config.excludedApps`) is refused. Excluded apps are also cut out of every screenshot.
 - **AIProvider** + `AnthropicProvider` (raw HTTP/SSE, `claude-opus-5-5`, effort low, server-side refusal fallback on) + `OpenAICompatProvider` (DeepSeek, OpenAI, Local). Text-only models get OCR text instead of images.
 - **Settings…** in the menu (⌘,): provider, model, address, "can see images", API key → Keychain (service `ie.dublinhacx.glance`, account = provider id).

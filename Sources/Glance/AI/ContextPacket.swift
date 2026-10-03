@@ -1,16 +1,13 @@
 import AppKit
 import ScreenCaptureKit
 
-/// What Glance knows about the thing you pointed at. Built already redacted:
-/// OCR lines with sensitive values are blacked out in the images and replaced in the text.
+/// What Glance knows about the thing you pointed at: only the selected region, never the rest of the screen.
+/// Built already redacted: OCR lines with sensitive values are blacked out in the image and replaced in the text.
 struct ContextPacket: Sendable {
     struct Content: Sendable {
-        /// JPEG crop of the selection.
+        /// JPEG of the selection.
         let selectionImage: Data
-        /// JPEG of the whole screen, downscaled, with the selection outlined in red.
-        let screenImage: Data
         let selectedText: String
-        let screenText: String
     }
 
     let appName: String
@@ -58,11 +55,9 @@ struct ContextPacket: Sendable {
     }
 
     func firstMessage(_ content: Content, question: String, imagesAllowed: Bool) -> ChatMessage {
-        var text = "App: \(appName)\nText in my selection (OCR):\n\(content.selectedText.isEmpty ? "(none)" : content.selectedText)\n"
-        if !imagesAllowed { text += "\nOther text on screen (OCR):\n\(content.screenText)\n" }
-        text += "\nMy question: \(question)"
-        return ChatMessage(role: .user, text: text,
-                           images: imagesAllowed ? [content.selectionImage, content.screenImage] : [])
+        let text = "App: \(appName)\nText in my selection (OCR):\n\(content.selectedText.isEmpty ? "(none)" : content.selectedText)\n"
+            + "\nMy question: \(question)"
+        return ChatMessage(role: .user, text: text, images: imagesAllowed ? [content.selectionImage] : [])
     }
 
     enum CaptureError: LocalizedError {
@@ -75,7 +70,7 @@ struct ContextPacket: Sendable {
         }
     }
 
-    /// Captures the screen (without Glance or excluded apps), OCRs it, and redacts it.
+    /// Captures only the selected region (without Glance or excluded apps), OCRs it, and redacts it.
     /// `selection` is in AppKit global coordinates.
     @MainActor
     static func capture(selection: CGRect, on screen: NSScreen, appName: String) async throws -> ContextPacket {
@@ -89,49 +84,35 @@ struct ContextPacket: Sendable {
             $0.processID == getpid() || Config.excludedApps.contains($0.bundleIdentifier)
         }
         let filter = SCContentFilter(display: display, excludingApplications: hidden, exceptingWindows: [])
+        // Capture just the selection, in display points with a top-left origin.
         let config = SCStreamConfiguration()
-        config.width = Int(CGFloat(display.width) * scale)
-        config.height = Int(CGFloat(display.height) * scale)
+        config.sourceRect = CGRect(x: selection.minX - screenFrame.minX, y: screenFrame.maxY - selection.maxY,
+                                   width: selection.width, height: selection.height)
+        config.width = Int(selection.width * scale)
+        config.height = Int(selection.height * scale)
         config.showsCursor = false
         let shot = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
-
-        let px = CGFloat(shot.width) / screenFrame.width
-        let full = CGRect(x: 0, y: 0, width: shot.width, height: shot.height)
-        let crop = CGRect(x: (selection.minX - screenFrame.minX) * px, y: (screenFrame.maxY - selection.maxY) * px,
-                          width: selection.width * px, height: selection.height * px).integral.intersection(full)
+        let size = CGSize(width: shot.width, height: shot.height)
 
         return try await Task.detached(priority: .userInitiated) {
-            let lines = try OCR.lines(in: shot)
             var hits = 0
             var blackout: [CGRect] = []
             var selected: [String] = [], rawSelected: [String] = []
-            var all: [String] = [], rawAll: [String] = []
-            for line in lines {
+            for line in try OCR.lines(in: shot) {
                 let r = Redactor.redact(line.text)
                 if r.hits > 0 { hits += r.hits; blackout.append(line.box.insetBy(dx: -4, dy: -4)) }
-                all.append(r.text)
-                rawAll.append(line.text)
-                if crop.contains(CGPoint(x: line.box.midX, y: line.box.midY)) {
-                    selected.append(r.text)
-                    rawSelected.append(line.text)
-                }
+                selected.append(r.text)
+                rawSelected.append(line.text)
             }
-            func content(_ image: CGImage, _ selected: [String], _ all: [String]) throws -> Content {
-                guard let cropped = image.cropping(to: crop) else { throw CaptureError.encode }
-                let outlined = try draw(image, size: full.size) { ctx in
-                    ctx.setStrokeColor(CGColor(red: 1, green: 0.1, blue: 0.1, alpha: 1))
-                    ctx.setLineWidth(max(4, px * 3))
-                    ctx.stroke(flip(crop, height: full.height))
-                }
-                return Content(selectionImage: try jpeg(cropped), screenImage: try jpeg(outlined),
-                               selectedText: selected.joined(separator: "\n"), screenText: all.joined(separator: "\n"))
-            }
-            let redacted = try draw(shot, size: full.size) { ctx in
+            let redacted = try draw(shot, size: size) { ctx in
                 ctx.setFillColor(.black)
-                for box in blackout { ctx.fill(flip(box, height: full.height)) }
+                for box in blackout { ctx.fill(flip(box, height: size.height)) }
             }
-            return ContextPacket(appName: appName, redacted: try content(redacted, selected, all),
-                                 raw: try content(shot, rawSelected, rawAll), redactions: hits)
+            return ContextPacket(
+                appName: appName,
+                redacted: Content(selectionImage: try jpeg(redacted), selectedText: selected.joined(separator: "\n")),
+                raw: Content(selectionImage: try jpeg(shot), selectedText: rawSelected.joined(separator: "\n")),
+                redactions: hits)
         }.value
     }
 

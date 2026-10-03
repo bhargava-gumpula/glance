@@ -12,7 +12,7 @@ Each open decision has a working default and exactly one place to change it.
 | Default models | Claude `claude-opus-5-5`, DeepSeek `deepseek-chat` (text-only → OCR text), OpenAI `gpt-5`, Local `qwen2.5vl` @ `localhost:11434/v1` | `Config.providerPresets`; per-provider override in Settings (model, address, "can see images") |
 | Claude effort | low (snappy panel) | `Config.claudeEffort` |
 | Claude refusal fallback | on (`fallbacks: "default"`, Anthropic picks the fallback model) | `AI/AnthropicProvider.swift` |
-| What a question sends | crop of the selection + whole screen (downscaled, selection outlined) + OCR text of the selection; text-only models get all on-screen OCR text instead of images | `ContextPacket.firstMessage` |
+| What a question sends | Only the selected region: one image of it plus its OCR text (text-only models get just the text). The rest of the screen is never captured | `ContextPacket.capture` / `firstMessage` |
 | Explain prompt and follow-ups | brief, grounded, quotes the spec it relies on; "Explain more" / "Example" | `Modes/Mode.swift` (moves to `Resources/prompts/` if prompts need editing without a rebuild) |
 | New selection = new conversation | yes | `ChatModel.pointed` |
 | ElevenLabs voice | set in Phase 2 | Settings (Phase 2) |

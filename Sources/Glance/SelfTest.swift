@@ -77,13 +77,13 @@ enum SelfTest {
         check(local?.url?.host == "localhost" && local?.value(forHTTPHeaderField: "Authorization") == nil,
               "Local: localhost, no auth header")
 
-        let content = ContextPacket.Content(selectionImage: img, screenImage: img, selectedText: "M4 chip",
-                                            screenText: "M4 chip\nAdd to bag")
+        let content = ContextPacket.Content(selectionImage: img, selectedText: "M4 chip")
         let packet = ContextPacket(appName: "Safari", redacted: content, raw: content, redactions: 0)
         check(packet.firstMessage(content, question: "q", imagesAllowed: false).images.isEmpty
-              && packet.firstMessage(content, question: "q", imagesAllowed: false).text.contains("Add to bag"),
-              "text-only packet carries screen OCR instead of images")
-        check(packet.firstMessage(content, question: "q", imagesAllowed: true).images.count == 2, "vision packet carries 2 images")
+              && packet.firstMessage(content, question: "q", imagesAllowed: false).text.contains("M4 chip"),
+              "text-only packet carries the selection's OCR text, no images")
+        check(packet.firstMessage(content, question: "q", imagesAllowed: true).images.count == 1,
+              "vision packet carries only the selection image")
 
         // Expanded redaction: each sample must lose its secret and gain its tag
         let cases: [(String, String, String)] = [
@@ -146,10 +146,8 @@ enum SelfTest {
         }
 
         // send(): redacts by default, sends raw only when revealed
-        let rawContent = ContextPacket.Content(selectionImage: img, screenImage: img,
-                                               selectedText: "Card 4242 4242 4242 4242", screenText: "")
-        let redContent = ContextPacket.Content(selectionImage: img, screenImage: img,
-                                               selectedText: "Card [CARD]", screenText: "")
+        let rawContent = ContextPacket.Content(selectionImage: img, selectedText: "Card 4242 4242 4242 4242")
+        let redContent = ContextPacket.Content(selectionImage: img, selectedText: "Card [CARD]")
         let cardPacket = ContextPacket(appName: "Safari", redacted: redContent, raw: rawContent, redactions: 1)
         func sent(reveal: Bool, question: String) -> String {
             let recorder = RecordingProvider()

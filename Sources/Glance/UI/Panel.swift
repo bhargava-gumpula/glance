@@ -81,7 +81,7 @@ final class ChatModel: ObservableObject {
 
     let mode = Mode.explain
     private var capture: Task<ContextPacket?, Never>?
-    /// The user's own words and the answers; ContextPacket.send() redacts and attaches the screen.
+    /// The user's own words and the answers; ContextPacket.send() redacts and attaches the selection.
     private var history: [ChatMessage] = []
     /// Set once the user explicitly asks to see hidden data; lasts until the next selection.
     private var revealed = false
@@ -149,7 +149,7 @@ final class ChatModel: ObservableObject {
             let answer = ContextPacket.send(packet, history: history, question: question, reveal: reveal,
                                             announce: announce, mode: mode, provider: provider) { preview in
                 var text = "Sending to \(preview.providerName): "
-                text += preview.imagesSent ? "selection + screen images, and the text below." : "on-screen text only (image stays on this Mac)."
+                text += preview.imagesSent ? "an image of your selection, and the text below." : "the selection’s text only (image stays on this Mac)."
                 if preview.revealed {
                     text += "\n⚠️ Not redacted: you asked Glance to look at hidden data (until your next selection)."
                 } else {
