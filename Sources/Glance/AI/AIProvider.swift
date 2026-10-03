@@ -64,6 +64,7 @@ extension AIProvider {
 
 enum Providers {
     /// The provider chosen in Settings, with its key from the Keychain.
+    @MainActor
     static func current() throws -> AIProvider {
         let id = Config.provider
         let preset = Config.preset(id)

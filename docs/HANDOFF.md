@@ -62,6 +62,7 @@ Built so far:
 - SwiftUI here: `@State` (and other macros) fail without Xcode, but `ObservableObject` + `@Published` + `@ObservedObject` compile fine. That's what the panel and Settings use.
 - The Address field accepts a full endpoint (e.g. Azure's `…/openai/v1/chat/completions`); only the first line is kept and the endpoint path is stripped (`Config.normalizedBaseURL`). Azure hosts also get an `api-key` header. Keys go only in the API key field, which saves to Keychain.
 - Computer-use automation can't drive Glance (it isn't in its app list), so point-and-ask checks need the owner.
+- API keys are read from Keychain once per launch and cached in memory (`Keychain.cache`). If macOS asks for the login password, click **Always Allow**; a rebuild can ask once more because the signature changes.
 - The first `codesign` after a change can wait on a hidden keychain prompt; the owner has to allow it (Always Allow).
 - The Claude request uses beta `server-side-fallback-2026-07-01` with `fallbacks: "default"`. If Anthropic ever rejects it, delete those two lines in `AnthropicProvider.swift`.
 - OpenAI default model `gpt-5` is a guess at a safe current id; change it in Settings if needed.
