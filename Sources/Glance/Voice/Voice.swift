@@ -15,16 +15,37 @@ protocol TextToSpeech: Sendable {
 }
 
 enum VoiceError: LocalizedError {
-    case noMicrophone, http(Int), noSpeechRecognizer, notAuthorized, nothingHeard
+    case noMicrophone, noSpeechRecognizer, notAuthorized, nothingHeard
+    case allEnginesFailed([String])
+    case elevenLabs(status: Int, code: String, message: String)
 
     var errorDescription: String? {
         switch self {
         case .noMicrophone: "Glance can't use the microphone. Check Permissions…"
-        case .http(let status): "ElevenLabs returned HTTP \(status)."
+        case .allEnginesFailed(let errors): errors.joined(separator: " ")
         case .noSpeechRecognizer: "On-device speech recognition isn't available on this Mac."
         case .notAuthorized: "Allow Speech Recognition for Glance in System Settings › Privacy & Security."
         case .nothingHeard: "Didn't catch that. Hold \(Config.hotkeyDescription) and speak."
+        case .elevenLabs(let status, let code, let message):
+            "ElevenLabs couldn't speak (HTTP \(status)\(code.isEmpty ? "" : ", \(code)")). \(message)"
         }
+    }
+
+    /// Builds the error from an ElevenLabs error body: {"detail": {"code"|"status", "message"}} or {"detail": "…"}.
+    static func elevenLabs(status: Int, body: Data) -> VoiceError {
+        let detail = (try? JSONSerialization.jsonObject(with: body) as? [String: Any])?["detail"]
+        if let d = detail as? [String: Any] {
+            let code = (d["code"] as? String) ?? (d["status"] as? String) ?? ""
+            return .elevenLabs(status: status, code: code, message: String((d["message"] as? String ?? "").prefix(200)))
+        }
+        return .elevenLabs(status: status, code: "", message: String((detail as? String ?? "").prefix(200)))
+    }
+
+    /// The voice itself is refused (not the key or credits), so another voice may work.
+    var isVoiceProblem: Bool {
+        guard case .elevenLabs(let status, let code, _) = self else { return false }
+        if ["paid_plan_required", "voice_not_found", "voice_access_denied"].contains(code) { return true }
+        return (status == 402 && code != "insufficient_credits" && code != "quota_exceeded") || status == 404
     }
 }
 
@@ -44,17 +65,19 @@ enum Voice {
 
     /// Tries each engine in order; any failure (offline, timeout, HTTP error) moves to the next.
     static func transcribe(wav: Data, with chain: [SpeechToText]) async throws -> (text: String, engine: String) {
-        var lastError: Error = VoiceError.nothingHeard
+        var errors: [String] = []
         for stt in chain {
             do {
                 let text = try await stt.transcribe(wav: wav).trimmingCharacters(in: .whitespacesAndNewlines)
                 if !text.isEmpty { return (text, stt.name) }
-                lastError = VoiceError.nothingHeard
+                errors.append("\(stt.name): \(VoiceError.nothingHeard.localizedDescription)")
             } catch {
-                lastError = error
+                // Log every engine's failure (never the audio or a transcript) so a fallback is explainable.
+                log.error("voice: \(stt.name, privacy: .public) speech-to-text failed (\(error.localizedDescription, privacy: .public))")
+                errors.append("\(stt.name): \(error.localizedDescription)")
             }
         }
-        throw lastError
+        throw VoiceError.allEnginesFailed(errors)
     }
 
     /// ElevenLabs when speaking is on and there's a key; otherwise answers stay text-only.
@@ -66,6 +89,24 @@ enum Voice {
     static func tts(muted: Bool, elevenLabsKey: String?, voiceID: String) -> TextToSpeech? {
         guard !muted, let key = elevenLabsKey, !key.isEmpty else { return nil }
         return ElevenLabsTTS(apiKey: key, voiceID: voiceID)
+    }
+
+    /// From a GET /v2/voices response: a voice the account can use through the API. Prefers stock (premade)
+    /// voices, then the account's own generated or cloned ones; never retired (legacy) or Voice Library voices.
+    static func usableVoice(fromVoicesJSON data: Data, excluding: String) -> (id: String, name: String)? {
+        guard let voices = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["voices"] as? [[String: Any]]
+        else { return nil }
+        func rank(_ v: [String: Any]) -> Int? {
+            guard v["is_legacy"] as? Bool != true, let id = v["voice_id"] as? String, id != excluding else { return nil }
+            switch v["category"] as? String {
+            case "premade": return 0
+            case "generated", "cloned": return v["is_owner"] as? Bool == false ? nil : 1
+            default: return nil
+            }
+        }
+        let best = voices.compactMap { v in rank(v).map { ($0, v) } }.min { $0.0 < $1.0 }?.1
+        guard let id = best?["voice_id"] as? String else { return nil }
+        return (id, best?["name"] as? String ?? id)
     }
 
     /// Splits off complete sentences (end mark followed by whitespace, or a newline); returns them and the rest.
@@ -98,17 +139,22 @@ enum Voice {
     /// Splits an answer that opens with "Say: <short spoken version>" on its own line from the full answer.
     static func splitSpoken(_ raw: String) -> SpokenSplit {
         let marker = "say:"
-        let t = raw.drop { $0.isWhitespace || $0 == "*" }
+        // Markdown around the marker ("**Say:**", "_Say:_", "> Say:", "# Say:", "`Say:`") is ignored.
+        let wrap: Set<Character> = ["*", "_", ">", "#", "`"]
+        let t = raw.drop { $0.isWhitespace || wrap.contains($0) }
         if t.count < marker.count { return marker.hasPrefix(t.lowercased()) ? .pending : .plain }
         guard t.prefix(marker.count).lowercased() == marker else { return .plain }
-        let rest = t.dropFirst(marker.count).drop { $0 == " " || $0 == "*" }
+        // The spoken line may also start on the next line ("**Say:**\nYes, …").
+        let rest = t.dropFirst(marker.count).drop { $0.isWhitespace || wrap.contains($0) }
         guard let nl = rest.firstIndex(where: \.isNewline) else { return .summary(say: String(rest), done: false, shown: "") }
         return .summary(say: String(rest[..<nl]), done: true, shown: rest[nl...].trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     /// Drops markdown marks so they aren't read aloud.
     static func speakable(_ s: String) -> String {
-        s.replacingOccurrences(of: #"[*_`#>]+"#, with: "", options: .regularExpression)
+        s.replacingOccurrences(of: #"[*_`]+"#, with: "", options: .regularExpression)
+            // Headings and quotes only at the start, so "C#" and "> 8 GB" are read as written.
+            .replacingOccurrences(of: #"^\s*(#+|>)\s+"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"^\s*[-•]\s+"#, with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespaces)
     }
@@ -119,6 +165,8 @@ enum Voice {
 private let elevenLabsSession: URLSession = {
     let c = URLSessionConfiguration.default
     c.timeoutIntervalForRequest = Config.sttTimeoutSeconds
+    // Total deadline as well (the request timeout only limits idle time between packets).
+    c.timeoutIntervalForResource = Config.sttTimeoutSeconds * 2
     return URLSession(configuration: c)
 }()
 
@@ -150,7 +198,7 @@ struct ElevenLabsSTT: SpeechToText {
     func transcribe(wav: Data) async throws -> String {
         let (data, resp) = try await elevenLabsSession.data(for: makeRequest(wav: wav))
         let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
-        guard status == 200 else { throw VoiceError.http(status) }
+        guard status == 200 else { throw VoiceError.elevenLabs(status: status, body: data.prefix(2048)) }
         struct R: Decodable { let text: String }
         return try JSONDecoder().decode(R.self, from: data).text
     }
@@ -160,11 +208,13 @@ struct ElevenLabsTTS: TextToSpeech {
     let apiKey: String
     let voiceID: String
 
-    func makeRequest(text: String) -> URLRequest {
-        let voice = voiceID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? voiceID
+    func makeRequest(text: String, voice voiceID: String? = nil) -> URLRequest {
+        let id = voiceID ?? self.voiceID
+        let voice = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
         var req = URLRequest(url: URL(string:
             "https://api.elevenlabs.io/v1/text-to-speech/\(voice)/stream?output_format=pcm_24000")!)
         req.httpMethod = "POST"
+        req.timeoutInterval = Config.ttsTimeoutSeconds
         req.setValue(apiKey, forHTTPHeaderField: "xi-api-key")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try? JSONSerialization.data(withJSONObject: ["text": text, "model_id": Config.elevenLabsTTSModel])
@@ -172,10 +222,20 @@ struct ElevenLabsTTS: TextToSpeech {
     }
 
     func speak(_ text: String, firstAudio: @escaping @Sendable () -> Void) async throws {
-        let (bytes, resp) = try await URLSession.shared.bytes(for: makeRequest(text: text))
-        let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
-        guard status == 200 else { throw VoiceError.http(status) }
+        let picker = VoicePicker.shared
+        var voice = await picker.voice(for: voiceID)
+        var (bytes, status) = try await open(text, voice: voice)
+        if status != 200 {
+            let error = await VoiceError.elevenLabs(status: status, body: Self.readBody(bytes))
+            // The voice isn't usable with this account (e.g. a library or retired voice on the free plan):
+            // switch to one the account can use, once, and retry.
+            guard error.isVoiceProblem, let replacement = try? await picker.replace(voiceID, apiKey: apiKey) else { throw error }
+            voice = replacement
+            (bytes, status) = try await open(text, voice: voice)
+            guard status == 200 else { throw await VoiceError.elevenLabs(status: status, body: Self.readBody(bytes)) }
+        }
         let player = PCMPlayer.shared
+        let generation = player.generation
         var chunk = Data()
         var first = true
         // 2400 bytes = 50 ms; the first chunk goes out as soon as it arrives.
@@ -183,15 +243,54 @@ struct ElevenLabsTTS: TextToSpeech {
             try Task.checkCancellation()
             chunk.append(b)
             if chunk.count >= 2400 {
-                player.enqueue(chunk)
+                player.enqueue(chunk, generation: generation)
                 chunk.removeAll(keepingCapacity: true)
                 if first { first = false; firstAudio() }
             }
         }
-        if chunk.count >= 2 { player.enqueue(chunk.prefix(chunk.count & ~1)); if first { firstAudio() } }
+        if chunk.count >= 2 { player.enqueue(chunk.prefix(chunk.count & ~1), generation: generation); if first { firstAudio() } }
+    }
+
+    private func open(_ text: String, voice: String) async throws -> (URLSession.AsyncBytes, Int) {
+        let (bytes, resp) = try await URLSession.shared.bytes(for: makeRequest(text: text, voice: voice))
+        return (bytes, (resp as? HTTPURLResponse)?.statusCode ?? 0)
+    }
+
+    /// The first 2 KB of an error response (ElevenLabs puts the reason in `detail`).
+    private static func readBody(_ bytes: URLSession.AsyncBytes) async -> Data {
+        var body = Data()
+        do { for try await b in bytes { body.append(b); if body.count >= 2048 { break } } } catch {}
+        return body
     }
 
     func stop() { PCMPlayer.shared.stop() }
+}
+
+/// Finds an ElevenLabs voice the account can use through the API, when the configured one is refused.
+/// Free accounts can't use Voice Library voices via the API, and retired voices like "Rachel" route to library ones.
+actor VoicePicker {
+    static let shared = VoicePicker()
+    private var replacements: [String: String] = [:]
+
+    func voice(for id: String) -> String { replacements[id] ?? id }
+
+    func replace(_ id: String, apiKey: String) async throws -> String? {
+        if let known = replacements[id] { return known }
+        var req = URLRequest(url: URL(string: "https://api.elevenlabs.io/v2/voices?page_size=100&voice_type=non-community")!)
+        req.timeoutInterval = Config.ttsTimeoutSeconds
+        req.setValue(apiKey, forHTTPHeaderField: "xi-api-key")
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard (resp as? HTTPURLResponse)?.statusCode == 200, let pick = Voice.usableVoice(fromVoicesJSON: data, excluding: id)
+        else {
+            log.error("voice: no ElevenLabs voice usable through the API on this account")
+            return nil
+        }
+        replacements[id] = pick.id
+        // Remember it; Settings shows the voice in use and can change it.
+        UserDefaults.standard.set(pick.id, forKey: "elevenLabsVoiceID")
+        log.notice("voice: switched to ElevenLabs voice \(pick.name, privacy: .public) (\(pick.id, privacy: .public))")
+        return pick.id
+    }
 }
 
 // MARK: Apple on-device
@@ -211,7 +310,9 @@ struct AppleSTT: SpeechToText {
         try wav.write(to: url)
         defer { try? FileManager.default.removeItem(at: url) }
         let req = SFSpeechURLRecognitionRequest(url: url)
-        req.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
+        // Never fall back to Apple's servers: this path is the on-device fallback.
+        guard recognizer.supportsOnDeviceRecognition else { throw VoiceError.noSpeechRecognizer }
+        req.requiresOnDeviceRecognition = true
         req.shouldReportPartialResults = false
 
         let once = Once()
@@ -244,6 +345,8 @@ final class Speaker {
     private var budget = 0
     private var worker: Task<Void, Never>?
     private var onFirstAudio: (@Sendable () -> Void)?
+    /// Called once per answer when speech fails (the answer stays on screen as text).
+    var onError: ((Error) -> Void)?
 
     func begin(_ tts: TextToSpeech?, onFirstAudio: (@Sendable () -> Void)? = nil) {
         stop()
@@ -305,7 +408,9 @@ final class Speaker {
     private func enqueue(_ sentence: String) {
         let s = Voice.speakable(sentence)
         // Always the first sentence; later ones only while they fit the short-answer budget.
-        guard tts != nil, !s.isEmpty, budget > 0, s.count <= budget || budget == Config.spokenCharLimit else { return }
+        guard tts != nil, !s.isEmpty, budget > 0 else { return }
+        // A sentence that doesn't fit ends speech, so the listener never hears a later sentence without the one before.
+        guard s.count <= budget || budget == Config.spokenCharLimit else { budget = 0; return }
         budget -= s.count
         queue.append(s)
         if worker == nil { work() }
@@ -321,10 +426,13 @@ final class Speaker {
                 do {
                     try await tts.speak(s) { fire?() }
                 } catch {
+                    // Stopped for a new answer: begin() already reset the state, so leave it alone.
+                    if Task.isCancelled { return }
                     // Speech failed: stay silent, the answer is still shown as text.
-                    if !Task.isCancelled { log.error("voice: text-to-speech failed (\(error.localizedDescription, privacy: .public)); text only") }
+                    log.error("voice: text-to-speech failed (\(error.localizedDescription, privacy: .public)); text only")
                     self.queue = []
                     self.budget = 0
+                    self.onError?(error)
                 }
             }
             if !Task.isCancelled { self?.worker = nil }

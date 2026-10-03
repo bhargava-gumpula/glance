@@ -32,8 +32,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = menu
 
         hotkey = Hotkey(keyCode: Config.hotkeyKeyCode,
-                        onPress: { [weak self] in self?.panel.keyDown() },
-                        onRelease: { [weak self] in self?.panel.keyUp() })
+                        onPress: { [weak self] in self?.panel.keyDown(at: $0) },
+                        onRelease: { [weak self] in self?.panel.keyUp(at: $0) })
 
         // Load Vision's models now so the first real question doesn't hang.
         Task.detached(priority: .utility) {

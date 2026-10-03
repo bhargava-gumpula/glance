@@ -226,6 +226,52 @@ enum SelfTest {
               "spoken: Say line is spoken, the rest is shown")
         check(Voice.speakable("**16 GB** is `enough`") == "16 GB is enough", "speakable: markdown dropped")
 
+        // Phase 2 hardening: ElevenLabs errors and voice choice
+        let paid = VoiceError.elevenLabs(status: 402, body: Data(#"{"detail":{"type":"payment_required","code":"paid_plan_required","message":"Free users cannot use library voices via the API."}}"#.utf8))
+        check(paid.isVoiceProblem && paid.localizedDescription.contains("paid_plan_required")
+              && paid.localizedDescription.contains("library voices"), "TTS error: 402 library voice is a voice problem, reason shown")
+        let credits = VoiceError.elevenLabs(status: 402, body: Data(#"{"detail":{"code":"insufficient_credits","message":"Not enough credits"}}"#.utf8))
+        check(!credits.isVoiceProblem, "TTS error: out of credits is not fixed by another voice")
+        check(VoiceError.elevenLabs(status: 401, body: Data(#"{"detail":{"status":"invalid_api_key","message":"Invalid API key"}}"#.utf8))
+              .localizedDescription.contains("invalid_api_key") && !VoiceError.elevenLabs(status: 401, body: Data()).isVoiceProblem,
+              "TTS error: legacy detail.status shape parsed; bad key is not a voice problem")
+        check(VoiceError.elevenLabs(status: 404, body: Data("not json".utf8)).isVoiceProblem, "TTS error: unknown voice (404) is a voice problem")
+        func voices(_ list: [[String: Any]]) -> Data { try! JSONSerialization.data(withJSONObject: ["voices": list]) }
+        let lib: [String: Any] = ["voice_id": "lib", "name": "Lib", "category": "professional"]
+        let legacy: [String: Any] = ["voice_id": "old", "name": "Rachel", "category": "premade", "is_legacy": true]
+        let mine: [String: Any] = ["voice_id": "mine", "name": "Mine", "category": "generated", "is_owner": true]
+        let stock: [String: Any] = ["voice_id": "stock", "name": "Sarah", "category": "premade"]
+        check(Voice.usableVoice(fromVoicesJSON: voices([lib, legacy, mine, stock]), excluding: "x")?.id == "stock", "voice pick: stock voice first")
+        check(Voice.usableVoice(fromVoicesJSON: voices([lib, legacy, mine]), excluding: "x")?.id == "mine", "voice pick: own voice when no stock voice")
+        check(Voice.usableVoice(fromVoicesJSON: voices([lib, legacy]), excluding: "x") == nil
+              && Voice.usableVoice(fromVoicesJSON: voices([stock]), excluding: "stock") == nil, "voice pick: never library, legacy or the refused voice")
+
+        check(Voice.splitSpoken("**Say:**\nYes, it is.\n\nMore.") == .summary(say: "Yes, it is.", done: true, shown: "More.")
+              && Voice.splitSpoken("_Say:_ Yes.\nMore.") == .summary(say: "Yes.", done: true, shown: "More."), "spoken: marker on its own line or wrapped in markdown")
+        check(Voice.speakable("> 8 GB beats C# here") == "8 GB beats C# here", "speakable: # and > kept mid-text")
+        check(PanelController.isTap(pressed: 10, released: 10.29) && !PanelController.isTap(pressed: 10, released: 10.31), "hotkey: tap vs hold by event time")
+
+        // Phase 2 hardening: Speaker (fake speech, runs on the main run loop)
+        func spoken(_ drive: @MainActor (Speaker, FakeTTS) -> Void) -> [String] {
+            MainActor.assumeIsolated {
+                let speaker = Speaker(), tts = FakeTTS()
+                drive(speaker, tts)
+                RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+                return tts.spoken
+            }
+        }
+        check(spoken { s, t in s.begin(t); _ = s.answer("Say: No, it isn't.\n\nThe full answer is longer.", final: true) } == ["No, it isn't."],
+              "speaker: only the Say line is spoken")
+        let long = String(repeating: "word ", count: 70) + "end."
+        check(spoken { s, t in s.begin(t); _ = s.answer("No. \(long) Fine.", final: true) } == ["No."],
+              "speaker: a sentence that doesn't fit ends speech (no out-of-order summary)")
+        check(spoken { s, t in
+            t.delay = 0.1
+            s.begin(t); _ = s.answer("Say: First answer.\n", final: true)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02)) // first worker is mid-speech
+            s.begin(t); _ = s.answer("Say: Second answer.\n", final: true)
+        }.last == "Second answer.", "speaker: a cancelled worker doesn't silence the next answer")
+
         print(failures == 0 ? "selftest: all passed" : "selftest: \(failures) failed")
         exit(failures == 0 ? 0 : 1)
     }
@@ -253,4 +299,19 @@ private final class RecordingProvider: AIProvider, @unchecked Sendable {
         throw CancellationError()
     }
     func textDelta(fromEvent payload: String) throws -> String? { nil }
+}
+
+/// Records what would be spoken; `delay` simulates a slow stream that honours cancellation.
+private final class FakeTTS: TextToSpeech, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _spoken: [String] = []
+    var delay: Double = 0
+    var spoken: [String] { lock.lock(); defer { lock.unlock() }; return _spoken }
+    func speak(_ text: String, firstAudio: @escaping @Sendable () -> Void) async throws {
+        if delay > 0 { try await Task.sleep(for: .seconds(delay)) }
+        record(text)
+        firstAudio()
+    }
+    private func record(_ text: String) { lock.lock(); _spoken.append(text); lock.unlock() }
+    func stop() {}
 }

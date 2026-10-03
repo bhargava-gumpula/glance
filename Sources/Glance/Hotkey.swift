@@ -6,11 +6,12 @@ import Carbon
 final class Hotkey {
     private var ref: EventHotKeyRef?
     private var handler: EventHandlerRef?
-    fileprivate let onPress: () -> Void
-    fileprivate let onRelease: () -> Void
+    /// Called with the event's own timestamp (seconds since boot).
+    fileprivate let onPress: (TimeInterval) -> Void
+    fileprivate let onRelease: (TimeInterval) -> Void
 
     init(keyCode: UInt32, modifiers: UInt32 = UInt32(optionKey),
-         onPress: @escaping () -> Void, onRelease: @escaping () -> Void = {}) {
+         onPress: @escaping (TimeInterval) -> Void, onRelease: @escaping (TimeInterval) -> Void = { _ in }) {
         self.onPress = onPress
         self.onRelease = onRelease
 
@@ -23,7 +24,8 @@ final class Hotkey {
             guard let event, let userData else { return noErr }
             let hotkey = Unmanaged<Hotkey>.fromOpaque(userData).takeUnretainedValue()
             let pressed = GetEventKind(event) == UInt32(kEventHotKeyPressed)
-            MainActor.assumeIsolated { pressed ? hotkey.onPress() : hotkey.onRelease() }
+            let time = GetEventTime(event)
+            MainActor.assumeIsolated { pressed ? hotkey.onPress(time) : hotkey.onRelease(time) }
             return noErr
         }, types.count, &types, selfPtr, &handler)
 
