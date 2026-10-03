@@ -39,7 +39,13 @@ final class PanelController {
 
     /// Clicking Pip opens the chat to message it (or hides the chat).
     private func petTapped() {
-        if panel.isVisible { panel.orderOut(nil) } else { show(pointing: false); focusInput() }
+        if panel.isVisible { hide() } else { show(pointing: false); focusInput() }
+    }
+
+    private func hide() {
+        panel.orderOut(nil)
+        pointTool.clear()
+        pet.goHome()
     }
 
     var isVisible: Bool { panel.isVisible }
@@ -76,9 +82,7 @@ final class PanelController {
     /// ⌥Space: show the panel and start pointing, or hide everything.
     func toggle() {
         if panel.isVisible {
-            panel.orderOut(nil)
-            pointTool.clear()
-            pet.goHome()
+            hide()
         } else {
             show(pointing: true)
         }
@@ -124,6 +128,8 @@ final class ChatModel: ObservableObject {
     /// Hold-to-talk: true while ⌥Space is held, `transcribing` until the text is back.
     @Published var listening = false
     @Published var transcribing = false
+    /// The answer being streamed, unsplit, so Pip can show and time its spoken line.
+    @Published var answerRaw: (turn: UUID, raw: String)?
     @Published var muted = !Config.ttsEnabled {
         didSet {
             UserDefaults.standard.set(!muted, forKey: "ttsEnabled")
@@ -261,7 +267,7 @@ final class ChatModel: ObservableObject {
             }
             do {
                 var raw = ""
-                for try await delta in answer { raw += delta; turns[index].text = speaker.answer(raw) }
+                for try await delta in answer { raw += delta; turns[index].text = speaker.answer(raw); answerRaw = (turns[index].id, raw) }
                 turns[index].text = speaker.answer(raw, final: true)
                 history += [ChatMessage(role: .user, text: question), ChatMessage(role: .assistant, text: raw)]
             } catch is CancellationError {

@@ -229,6 +229,7 @@ enum SelfTest {
         PipSprite.selfTest(check)
         PetGeometry.selfTest(check)
         PetBubbleView.selfTest(check)
+        PetView.selfTest(check)
         print(failures == 0 ? "selftest: all passed" : "selftest: \(failures) failed")
         exit(failures == 0 ? 0 : 1)
     }
