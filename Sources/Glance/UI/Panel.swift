@@ -263,9 +263,10 @@ final class ChatModel: ObservableObject {
                 if let spokenAt { log.notice("voice: release → first spoken audio \(Date().timeIntervalSince(spokenAt), format: .fixed(precision: 2), privacy: .public) s") }
             }
             do {
-                for try await delta in answer { turns[index].text += delta; speaker.feed(delta) }
-                speaker.finish()
-                history += [ChatMessage(role: .user, text: question), ChatMessage(role: .assistant, text: turns[index].text)]
+                var raw = ""
+                for try await delta in answer { raw += delta; turns[index].text = speaker.answer(raw) }
+                turns[index].text = speaker.answer(raw, final: true)
+                history += [ChatMessage(role: .user, text: question), ChatMessage(role: .assistant, text: raw)]
             } catch is CancellationError {
             } catch {
                 if turns[index].text.isEmpty { turns.remove(at: index) }

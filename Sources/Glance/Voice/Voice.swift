@@ -86,6 +86,26 @@ enum Voice {
         return (done, current)
     }
 
+    enum SpokenSplit: Equatable {
+        /// Too short to tell whether it opens with "Say:".
+        case pending
+        /// No "Say:" line: the answer itself is spoken and shown.
+        case plain
+        /// `say` is spoken; `shown` (the rest) is displayed. `done` once the "Say:" line has ended.
+        case summary(say: String, done: Bool, shown: String)
+    }
+
+    /// Splits an answer that opens with "Say: <short spoken version>" on its own line from the full answer.
+    static func splitSpoken(_ raw: String) -> SpokenSplit {
+        let marker = "say:"
+        let t = raw.drop { $0.isWhitespace || $0 == "*" }
+        if t.count < marker.count { return marker.hasPrefix(t.lowercased()) ? .pending : .plain }
+        guard t.prefix(marker.count).lowercased() == marker else { return .plain }
+        let rest = t.dropFirst(marker.count).drop { $0 == " " || $0 == "*" }
+        guard let nl = rest.firstIndex(where: \.isNewline) else { return .summary(say: String(rest), done: false, shown: "") }
+        return .summary(say: String(rest[..<nl]), done: true, shown: rest[nl...].trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
     /// Drops markdown marks so they aren't read aloud.
     static func speakable(_ s: String) -> String {
         s.replacingOccurrences(of: #"[*_`#>]+"#, with: "", options: .regularExpression)
@@ -230,6 +250,34 @@ final class Speaker {
         self.tts = tts
         self.onFirstAudio = onFirstAudio
         budget = Config.spokenCharLimit
+        fed = 0
+        finished = false
+    }
+
+    private var fed = 0
+    private var finished = false
+
+    /// Takes the whole answer so far; speaks its "Say:" line (or, without one, the start of the answer)
+    /// and returns the text to show on screen.
+    func answer(_ raw: String, final: Bool = false) -> String {
+        var shown = raw
+        var speak = raw
+        var done = final
+        switch Voice.splitSpoken(raw) {
+        case .pending where !final:
+            return ""
+        case .summary(let say, let sayDone, let rest):
+            speak = say
+            done = sayDone || final
+            shown = final && rest.isEmpty ? say : rest
+        default:
+            break
+        }
+        if !finished {
+            if speak.count > fed { feed(String(speak.dropFirst(fed))); fed = speak.count }
+            if done { finish(); finished = true }
+        }
+        return shown
     }
 
     func feed(_ delta: String) {

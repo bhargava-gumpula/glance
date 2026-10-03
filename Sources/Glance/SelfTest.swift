@@ -220,6 +220,10 @@ enum SelfTest {
         let split = Voice.sentences("Yes, 16 GB is enough. It costs €1,299.00 and\nhas 1.5 GB")
         check(split.done == ["Yes, 16 GB is enough.", "It costs €1,299.00 and"] && split.rest == "has 1.5 GB",
               "sentences: splits on end marks and newlines, not decimals")
+        check(Voice.splitSpoken("Sa") == .pending && Voice.splitSpoken("Yes, it is.") == .plain, "spoken: waits for the Say: marker, else plain")
+        check(Voice.splitSpoken("Say: Yes, 16 GB is") == .summary(say: "Yes, 16 GB is", done: false, shown: ""), "spoken: Say line streams")
+        check(Voice.splitSpoken("**Say:** Yes.\n\nIt has **16 GB**.") == .summary(say: "Yes.", done: true, shown: "It has **16 GB**."),
+              "spoken: Say line is spoken, the rest is shown")
         check(Voice.speakable("**16 GB** is `enough`") == "16 GB is enough", "speakable: markdown dropped")
 
         // Phase 3: timeline (temp database)
