@@ -8,16 +8,16 @@ Pitch rules: say only what the live demo shows. Anything marked [if built] gets 
 "This is Aoife. She's starting college, she needs her first laptop, and her course uses software she's never seen. She's got ten tabs open, a budget in her notes, and every time she asks an AI for help, she has to explain everything again. Or take a screenshot. Or copy and paste. Her computer already has the answer on screen. It just can't see it. So we built Glance."
 
 **0:15 – 1:15 | Shopping: Explain (live demo)**
-"Aoife looks at two laptops, and jots her budget in Notes. Nothing special. Now she's on a third laptop." (Hold the hotkey, point at the page, speak.) *"How's this different from the earlier ones?"*
-"Hear that? It compared all three laptops, and used her budget, from three different apps. She never copied anything. Glance has been quietly keeping a short memory of what she's been looking at, on her own Mac."
-(Point at a confusing spec.) *"What does this mean for me?"*
+"Aoife looks at two laptops, and jots her budget in Notes. Nothing special. Now she's on a third laptop." (Drag a box over the specs, then hold the hotkey and speak.) *"How's this different from the earlier ones?"*
+"Hear that? It compared all three laptops, and used her budget, from two different apps. She never copied anything. Glance has been quietly keeping a short memory of what she's been looking at, on her own Mac."
+(Drag a box over a confusing spec.) *"What does this mean for me?"*
 "Plain answer, spoken back. She points, she speaks, she gets help."
 
 **1:15 – 2:00 | Learning: Guide (live demo)**
 "Now her course app. She says: *'Show me how to export this as a PDF.'*" (Highlight appears.) "Glance doesn't just tell her. It draws a ring on the exact button on her screen, and says it out loud. She clicks, asks for the next step, and it moves on." [if v2 built: "If she clicks the wrong thing, it notices and says so."]
 
 **2:00 – 2:20 | Privacy (live demo)**
-"Now, a tool that sees your screen needs to earn trust. Here's a fake bank page with a fake card number. Before anything leaves the Mac, Glance shows you exactly what will be sent, and the card is blacked out. 'I hid that.' Password managers and banking sites are never captured at all. And this switch" (local-only) "keeps everything on the laptop, with a local model. One tap forgets the last 15 minutes."
+"Now, a tool that sees your screen needs to earn trust. Here's a fake bank page with a fake card number. She points at it. Before anything leaves the Mac, Glance shows you exactly what will be sent, and the card is blacked out. [if built: 'I hid 3 sensitive items.'] Password managers are never captured, and banking and login pages are never saved to memory. When you point at one yourself, card numbers and IBANs are hidden first. [if Ollama is set up: "And this switch keeps everything on the laptop, with a local model."] One click forgets the last 15 minutes."
 
 **2:20 – 2:30 | Close (slide 4)**
 "Screenpipe, as far as we know, remembers your screen. Glance helps you act on it, privately. Built today. Thank you."
