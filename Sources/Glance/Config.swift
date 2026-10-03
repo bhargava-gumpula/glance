@@ -19,8 +19,11 @@ enum Config {
 
     /// Holding the hotkey longer than this means talk; a shorter tap toggles the panel.
     static let holdToTalkSeconds = 0.3
-    /// ElevenLabs voice for spoken answers (default: the premade "Rachel"). Settings override.
-    static var elevenLabsVoiceID: String { value("elevenLabsVoiceID", default: "21m00Tcm4TlvDq8ikWAM") }
+    /// ElevenLabs voice for spoken answers. Settings override.
+    static var elevenLabsVoiceID: String { value("elevenLabsVoiceID", default: defaultElevenLabsVoiceID) }
+    /// "Sarah", a stock voice. If the account can't use it through the API, `VoicePicker` switches to one it can.
+    static let defaultElevenLabsVoiceID = "EXAVITQu4vr4xnSDxMaL"
+    static let ttsTimeoutSeconds: Double = 10
     static let elevenLabsSTTModel = "scribe_v2"
     static let elevenLabsTTSModel = "eleven_flash_v2_5"
     /// After this, speech-to-text falls back to Apple on-device.

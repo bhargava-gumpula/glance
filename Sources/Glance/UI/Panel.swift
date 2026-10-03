@@ -41,33 +41,40 @@ final class PanelController {
 
     func showStatus(_ text: String) { chat.status = text }
 
-    private var pressedAt: Date?
+    /// Key-event times (seconds since boot, from the events themselves), so a slow mic start can't turn a tap into a hold.
+    private var pressedAt: TimeInterval?
     private var holdTimer: Task<Void, Never>?
 
     /// ⌥Space down: start recording right away (so the first word isn't clipped); it counts as talking once held.
-    func keyDown() {
+    func keyDown(at time: TimeInterval) {
         guard pressedAt == nil else { return } // key repeat
-        pressedAt = Date()
-        chat.startRecording()
+        pressedAt = time
         holdTimer = Task { [weak self] in
             try? await Task.sleep(for: .seconds(Config.holdToTalkSeconds))
             guard let self, !Task.isCancelled else { return }
             if !self.panel.isVisible { self.show(pointing: false) }
             self.chat.listening = true
         }
+        chat.startRecording()
     }
 
     /// ⌥Space up: a quick tap toggles the panel as before; after a hold, the recording becomes the question.
-    func keyUp() {
+    func keyUp(at time: TimeInterval) {
         guard let pressed = pressedAt else { return }
         pressedAt = nil
         holdTimer?.cancel()
-        if Date().timeIntervalSince(pressed) < Config.holdToTalkSeconds {
+        if Self.isTap(pressed: pressed, released: time) {
             chat.discardRecording()
             toggle()
         } else {
+            // The release can beat the hold timer; the question needs the panel either way.
+            if !panel.isVisible { show(pointing: false) }
             chat.askFromRecording()
         }
+    }
+
+    nonisolated static func isTap(pressed: TimeInterval, released: TimeInterval) -> Bool {
+        released - pressed < Config.holdToTalkSeconds
     }
 
     /// ⌥Space: show the panel and start pointing, or hide everything.
@@ -118,7 +125,9 @@ final class ChatModel: ObservableObject {
     @Published var busy = false
     @Published var status = "Drag a box over anything, then ask about it."
     /// Hold-to-talk: true while ⌥Space is held, `transcribing` until the text is back.
-    @Published var listening = false
+    @Published var listening = false {
+        didSet { if listening { speaker.stop() } } // barge-in only once the press counts as a hold, not on a tap
+    }
     @Published var transcribing = false
     @Published var muted = !Config.ttsEnabled {
         didSet {
@@ -140,9 +149,21 @@ final class ChatModel: ObservableObject {
     private let speaker = Speaker()
     private var recordingOK = false
 
+    /// Bumped by every new recording, question and selection; a transcription that finishes after one of
+    /// those is stale and dropped (the newer action replaces it).
+    private var serial = 0
+    private var transcriptions = 0
+
     func startRecording() {
-        speaker.stop() // barge-in: stop reading the last answer
+        serial += 1
         do { try recorder.start(); recordingOK = true } catch { recordingOK = false }
+    }
+
+    /// Voice problems are shown once each per launch, so a broken voice doesn't repeat under every answer.
+    private var voiceNotices: Set<String> = []
+    private func voiceNotice(_ text: String) {
+        guard voiceNotices.insert(text).inserted else { return }
+        turns.append(Turn(kind: .notice, text: text))
     }
 
     func discardRecording() {
@@ -157,22 +178,28 @@ final class ChatModel: ObservableObject {
             return
         }
         transcribing = true
+        let mine = serial
+        transcriptions += 1
+        let ticket = transcriptions
+        let released = Date()
         Task {
-            defer { transcribing = false }
+            defer { if transcriptions == ticket { transcribing = false } } // a newer one owns the indicator
             try? await Task.sleep(for: .milliseconds(150)) // keep the tail of the last word
+            guard serial == mine else { return } // a new press took the mic; it replaces this question
             let wav = recorder.stop()
-            let released = Date()
             guard Recorder.duration(ofWAV: wav) >= 0.3 else {
                 turns.append(Turn(kind: .notice, text: VoiceError.nothingHeard.localizedDescription))
                 return
             }
             do {
                 let heard = try await Voice.transcribe(wav: wav, with: Voice.sttChain())
+                guard serial == mine else { return } // the user moved on (new question, selection or recording)
                 log.notice("voice: transcribed by \(heard.engine, privacy: .public) in \(Date().timeIntervalSince(released), format: .fixed(precision: 2), privacy: .public) s")
                 let shown = heard.engine == "ElevenLabs" ? "🎙 \(heard.text)" : "🎙 \(heard.text) (\(heard.engine))"
                 transcribing = false
                 ask(heard.text, shown: shown, spokenAt: released)
             } catch {
+                guard serial == mine else { return }
                 turns.append(Turn(kind: .notice, text: "Couldn't transcribe: \(error.localizedDescription)"))
             }
         }
@@ -181,6 +208,7 @@ final class ChatModel: ObservableObject {
     /// A new selection starts a new conversation.
     func pointed(at rect: CGRect, on screen: NSScreen) {
         stop()
+        serial += 1
         turns = []
         history = []
         revealed = false
@@ -226,6 +254,7 @@ final class ChatModel: ObservableObject {
     /// `spokenAt`: when the user released ⌥Space, for the release → first spoken word log.
     private func ask(_ question: String, shown: String, spokenAt: Date? = nil) {
         if busy { stop() } // a spoken question replaces the one being answered
+        serial += 1
         busy = true
         turns.append(Turn(kind: .user, text: shown))
         answering = Task {
@@ -237,8 +266,11 @@ final class ChatModel: ObservableObject {
             }
             let source = capture
             var packet = await source?.value
+            // Stopped while the screen was being read (Stop, a new question or a new selection): send nothing,
+            // and leave `revealed` and the history to whatever replaced this question.
+            guard !Task.isCancelled else { return }
             // A new selection while waiting: this question belongs to the old one.
-            guard !Task.isCancelled, capture == source else { return }
+            guard capture == source else { return }
             if history.isEmpty, let p = packet, p.memory.isEmpty, let timeline { // memory joins the first question only
                 let terms = Timeline.terms(from: [question, p.raw.selectedText])
                 let since = Date().timeIntervalSince1970 - Double(Config.retentionMinutes * 60)
@@ -266,16 +298,28 @@ final class ChatModel: ObservableObject {
             }
             turns.append(Turn(kind: .assistant, text: ""))
             let index = turns.count - 1
-            speaker.begin(Voice.tts(muted: muted)) {
+            let tts = Voice.tts(muted: muted)
+            if tts == nil, !muted, !Keychain.has(Voice.elevenLabsAccount) {
+                voiceNotice("Add an ElevenLabs key in Settings to hear answers, or mute with the speaker button.")
+            }
+            speaker.onError = { [weak self] error in self?.voiceNotice(error.localizedDescription) }
+            speaker.begin(tts) {
                 if let spokenAt { log.notice("voice: release → first spoken audio \(Date().timeIntervalSince(spokenAt), format: .fixed(precision: 2), privacy: .public) s") }
             }
             do {
                 var raw = ""
-                for try await delta in answer { raw += delta; turns[index].text = speaker.answer(raw) }
+                for try await delta in answer {
+                    guard !Task.isCancelled else { return } // turns may already belong to a new selection
+                    raw += delta
+                    turns[index].text = speaker.answer(raw)
+                }
+                // A cancelled stream just ends; it is not a finished answer and must not enter the history.
+                guard !Task.isCancelled else { return }
                 turns[index].text = speaker.answer(raw, final: true)
                 history += [ChatMessage(role: .user, text: question), ChatMessage(role: .assistant, text: raw)]
             } catch is CancellationError {
             } catch {
+                guard !Task.isCancelled else { return }
                 if turns[index].text.isEmpty { turns.remove(at: index) }
                 turns.append(Turn(kind: .notice, text: error.localizedDescription))
             }
