@@ -59,22 +59,35 @@ final class SettingsModel: ObservableObject {
     func save() {
         let d = UserDefaults.standard
         d.set(model.trimmingCharacters(in: .whitespaces), forKey: "model.\(providerID)")
-        d.set(Config.normalizedBaseURL(baseURL), forKey: "baseURL.\(providerID)")
+        // Audit A12: only a real http(s) address is stored (a key pasted here would sit in plain text).
+        let address = Config.normalizedBaseURL(baseURL)
+        var problems: [String] = []
+        if Config.validBaseURL(address) { d.set(address, forKey: "baseURL.\(providerID)") } else {
+            problems.append("Address must start with https:// (keys go in the API key field).")
+            baseURL = Config.baseURL(for: providerID)
+        }
         d.set(supportsImages, forKey: "supportsImages.\(providerID)")
-        if !keyInput.isEmpty { Keychain.set(providerID, keyInput) }
+        if !keyInput.isEmpty {
+            Keychain.set(providerID, keyInput)
+            // Audit A11: the key belongs to this host only.
+            if let host = URL(string: Config.baseURL(for: providerID))?.host { d.set(host, forKey: "keyHost.\(providerID)") }
+        }
         keyInput = ""
         hasKey = Keychain.has(providerID)
         let voice = voiceID.trimmingCharacters(in: .whitespaces)
-        if voice.isEmpty { d.removeObject(forKey: "elevenLabsVoiceID") } else { d.set(voice, forKey: "elevenLabsVoiceID") }
+        if voice.isEmpty { d.removeObject(forKey: "elevenLabsVoiceID") }
+        else if Config.validVoiceID(voice) { d.set(voice, forKey: "elevenLabsVoiceID") }
+        else { problems.append("Voice ID should be a short ID like EXAVITQu4vr4xnSDxMaL, not a key.") }
         voiceID = Config.elevenLabsVoiceID
         if !elevenKeyInput.isEmpty { Keychain.set(Voice.elevenLabsAccount, elevenKeyInput) }
         elevenKeyInput = ""
         hasElevenKey = Keychain.has(Voice.elevenLabsAccount)
-        saved = "Saved."
+        saved = problems.isEmpty ? "Saved." : problems.joined(separator: " ")
     }
 
     func removeKey() {
         Keychain.set(providerID, "")
+        UserDefaults.standard.removeObject(forKey: "keyHost.\(providerID)")
         hasKey = false
         saved = "Key removed."
     }

@@ -120,8 +120,8 @@ struct ContextPacket: Sendable {
             var hits = 0
             var blackout: [CGRect] = []
             var selected: [String] = [], rawSelected: [String] = []
-            for line in try OCR.lines(in: shot) {
-                let r = Redactor.redact(line.text)
+            let lines = try OCR.lines(in: shot)
+            for (line, r) in zip(lines, Redactor.redactLines(lines.map(\.text))) {
                 if r.hits > 0 { hits += r.hits; blackout.append(line.box.insetBy(dx: -4, dy: -4)) }
                 selected.append(r.text)
                 rawSelected.append(line.text)
