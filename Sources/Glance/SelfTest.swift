@@ -167,7 +167,7 @@ enum SelfTest {
 
         // Phase 2: OCR warm-up
         let warm = OCR.warmUp()
-        print("      OCR warm-up: \(String(format: "%.1f", warm.seconds)) s (cold); recognized \"\(warm.text)\"")
+        print("      OCR warm-up: \(String(format: "%.1f", warm.seconds)) s (cold); first attempt \(warm.first); recognized \"\(warm.text)\"")
         check(warm.text.contains("Glance"), "OCR warm-up actually runs recognition")
         check(OCR.warmUp().seconds < 3, "OCR is fast once warmed up")
 

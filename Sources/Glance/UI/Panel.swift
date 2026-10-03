@@ -39,6 +39,8 @@ final class PanelController {
 
     var isVisible: Bool { panel.isVisible }
 
+    func showStatus(_ text: String) { chat.status = text }
+
     private var pressedAt: Date?
     private var holdTimer: Task<Void, Never>?
 

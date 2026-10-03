@@ -53,6 +53,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task.detached(priority: .utility) {
             let warm = OCR.warmUp()
             log.notice("OCR warm-up took \(warm.seconds, format: .fixed(precision: 1), privacy: .public) s")
+            if warm.text.isEmpty {
+                await MainActor.run { self.panel.showStatus("OCR unavailable — relaunch Glance.") }
+            }
         }
 
         if !Permission.allGranted { onboarding.show() }
