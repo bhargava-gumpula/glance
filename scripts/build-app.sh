@@ -28,7 +28,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </dict></plist>
 PLIST
 
-if security find-identity -v -p codesigning | grep -q '"Glance Dev"'; then
+if security find-identity -p codesigning | grep -q '"Glance Dev"'; then
   codesign --force --sign "Glance Dev" "$APP"
 else
   echo "warning: 'Glance Dev' signing identity not found; signing ad-hoc (permissions reset on every rebuild)" >&2
