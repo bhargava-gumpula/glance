@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Liffey Demo Bank</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+*{box-sizing:border-box}body{margin:0;font:16px/1.5 -apple-system,Helvetica,Arial,sans-serif;background:#eef3f6;color:#12303f}
+.banner{background:#c62828;color:#fff;text-align:center;font-weight:800;font-size:22px;letter-spacing:.04em;padding:14px}
+header{background:#0b5c73;color:#fff;padding:16px 32px;font-size:20px;font-weight:600}
+main{max-width:860px;margin:24px auto;padding:0 16px;display:grid;gap:20px;grid-template-columns:1fr 1fr}
+.card{background:#fff;border-radius:10px;padding:20px;box-shadow:0 1px 4px #0002}
+.wide{grid-column:1/-1}h2{margin:0 0 12px;font-size:17px}
+dl{margin:0;display:grid;grid-template-columns:140px 1fr;gap:8px}dt{color:#5b7380}dd{margin:0;font-family:Menlo,monospace}
+label{display:block;margin:10px 0 4px;color:#5b7380;font-size:14px}
+input{width:100%;padding:9px;border:1px solid #b8c7d0;border-radius:6px;font-size:16px}
+button{margin-top:14px;background:#0b5c73;color:#fff;border:0;border-radius:6px;padding:10px 18px;font-size:16px}
+</style></head><body>
+<div class="banner">DEMO PAGE — FICTIONAL BANK — FAKE DATA</div>
+<header>Liffey Demo Bank &middot; Online Banking</header>
+<main>
+<section class="card"><h2>Account holder</h2><dl>
+<dt>Name</dt><dd>Aoife Demo</dd>
+<dt>Email</dt><dd>aoife.demo@example.ie</dd>
+<dt>PPSN</dt><dd>1234567T</dd>
+<dt>IBAN</dt><dd>IE29 AIBK 9311 5212 3456 78</dd></dl></section>
+<section class="card"><h2>Saved card</h2><dl>
+<dt>Card number</dt><dd>4242 4242 4242 4242</dd>
+<dt>Expiry</dt><dd>12/30</dd>
+<dt>Balance</dt><dd>€1,284.50</dd></dl></section>
+<section class="card wide"><h2>Sign in to continue</h2>
+<label for="u">Email</label><input id="u" type="text" value="aoife.demo@example.ie">
+<label for="p">Password</label><input id="p" type="password" value="demo-password-123">
+<button type="button">Sign in</button></section>
+</main></body></html>
