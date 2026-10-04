@@ -229,7 +229,7 @@ Built so far:
 - **Errors:** a failed question (`ChatModel.failed`) shows "Something went wrong." in Pip's bubble with Show more; the error card stays in the panel. Send/Cancel stays in the bubble.
 - **Selection highlight** (PointTool overlay + Pip's pointing pose) clears when its answer has finished streaming and speaking (`chat.busy` false and Pip's speech estimate over), on the next question, on hide, or on Stop (`ChatModel.clearsHighlight`). Guide's ring is never touched.
 - Selftest: 18 checks (surfaces, error bubble, highlight rules) in `Modes/Phase6Tests.swift`.
-- **Hide chat** (owner request): while the panel is open, Pip's bubble link reads "Hide chat"; the panel header has a labelled "Hide chat" button; the menu has "Show Chat"/"Hide Chat" (`GlanceSurface.chatToggleTitle`). Esc in the panel (even in its text field) hides only the chat, unless Send/Cancel is open (`ChatPanel.escHidesChat`). Pip and its answer bubble stay. 5 selftests.
+- **Hide chat** (owner request): while the panel is open, Pip's bubble link reads "Hide chat"; the panel header has a labelled "Hide chat" button; the menu has "Show Chat"/"Hide Chat" (`GlanceSurface.chatToggleTitle`). Esc in the panel (even in its text field) hides only the chat, unless Send/Cancel is open (`ChatPanel.escHidesChat`); it never stops an active Guide session (`Guide.escIsForChat`). Pip and its answer bubble stay. 6 selftests.
 
 ## Notes
 - UI (Pip and the chat panel) architecture, Guide API, decisions, audit A13–A16 and gaps: [docs/notes/UI-NOTES.md](notes/UI-NOTES.md)

@@ -164,6 +164,9 @@ enum Guide {
         return front?.processIdentifier == getpid() ? lastApp : front
     }
 
+    /// Esc pressed inside the chat panel belongs to the panel (it hides the chat), never to Guide.
+    @MainActor static func escIsForChat(_ window: NSWindow?) -> Bool { window is ChatPanel }
+
     /// Why Guide won't look, or nil.
     @MainActor static func refusal(_ app: NSRunningApplication?) -> String? {
         guard let app else { return "I can't tell which app you're in. Click its window, then ask again." }
@@ -350,6 +353,7 @@ final class GuideSession {
         let onEsc: (NSEvent) -> Void = { [weak self] e in
             guard e.keyCode == 53 else { return }
             MainActor.assumeIsolated {
+                guard !Guide.escIsForChat(e.window) else { return } // Esc in the chat panel hides the chat only
                 guard let self, self.active else { return }
                 if let c = self.auto?.lastCorrection, Date().timeIntervalSince(c) < 15 {
                     self.auto?.lastCorrection = nil // that Esc follows our own "Press Esc"

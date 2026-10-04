@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 /// Phase 6 selftests (Guide v2): assert-only, no AX, screen or network.
 enum Phase6Tests {
@@ -117,6 +117,12 @@ enum Phase6Tests {
         check(!esc.panel && esc.pip, "hide chat: Esc with the chat closed changes nothing")
         check(ChatPanel.escHidesChat(keyCode: 53, confirmOpen: false) && !ChatPanel.escHidesChat(keyCode: 53, confirmOpen: true)
               && !ChatPanel.escHidesChat(keyCode: 36, confirmOpen: false), "hide chat: Esc hides the chat, except while Send/Cancel is open")
+
+        let (chatEsc, otherEsc) = MainActor.assumeIsolated {
+            (Guide.escIsForChat(ChatPanel(contentRect: .zero, styleMask: [], backing: .buffered, defer: true)),
+             Guide.escIsForChat(NSWindow(contentRect: .zero, styleMask: [], backing: .buffered, defer: true)) || Guide.escIsForChat(nil))
+        }
+        check(chatEsc && !otherEsc, "hide chat: Esc in the chat panel doesn't stop Guide; elsewhere it still does")
 
         // 7b. Selection highlight: cleared when its answer is done, on a new question, hide or Stop; never Guide's ring
         let C = ChatModel.clearsHighlight
