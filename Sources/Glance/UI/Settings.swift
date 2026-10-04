@@ -9,7 +9,7 @@ final class SettingsController {
 
     func show() {
         if window == nil {
-            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 440),
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 520),
                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
             w.title = "Glance Settings"
             w.isReleasedWhenClosed = false
@@ -106,9 +106,17 @@ final class SettingsModel: ObservableObject {
 
 struct SettingsView: View {
     @ObservedObject var model: SettingsModel
+    @AppStorage("localOnly") private var localOnly = false
 
     var body: some View {
         Form {
+            Section {
+                Toggle("Local only (nothing leaves this Mac)", isOn: $localOnly)
+                if localOnly {
+                    Text("Answers come from the Local provider below (Ollama / LM Studio on this Mac) or, when it isn't running, Apple's on-device model. Speech uses Apple on-device recognition and the Mac voice. Every other address is blocked.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
             Picker("AI provider", selection: Binding(get: { model.providerID }, set: { model.select($0) })) {
                 ForEach(Config.providerPresets, id: \.id) { Text($0.name).tag($0.id) }
             }

@@ -16,6 +16,8 @@ struct ContextPacket: Sendable {
     /// Unredacted copy, kept in memory only. Sent only when the user explicitly asks Glance to look at hidden data.
     let raw: Content
     var redactions: Int
+    /// Guide's full-screen packet (Phase 5). Never sent unredacted, whatever the question says.
+    var isScreen = false
     /// The recent-activity context from the on-device timeline (activity log + page text), already redacted.
     /// Always redacted, even when the user asks to reveal the selection. Empty unless a question was asked.
     var memory = ""
@@ -53,34 +55,65 @@ struct ContextPacket: Sendable {
         let memoryApps: Int
         let redactions: Int
         let revealed: Bool
+        /// High-risk tags going out (e.g. "[CARD]": 2), counted on the redacted text even when revealing.
+        let highRisk: [String: Int]
+        /// "Hid 2 card numbers and 1 IBAN. Send?" when a tap is needed (high-risk item or reveal), else nil.
+        let confirmPrompt: String?
     }
 
     /// HARD RULE: this is the only code path that sends screen content off the Mac.
     /// `history` holds the user's own words and earlier answers. Everything the user wrote is redacted,
     /// and the redacted packet is attached to the first question, unless `reveal` is set because the user
     /// explicitly asked to see hidden data. `announce` shows the preview before the request starts.
+    /// Phase 4: when `confirm` is given it is always awaited before anything goes out (Guide's consent); otherwise
+    /// `SendConfirm` asks Send/Cancel only when the preview has a `confirmPrompt`. Cancel: nothing is sent and the
+    /// stream ends without text.
     @MainActor
     static func send(_ packet: ContextPacket?, history: [ChatMessage], question: String, reveal: Bool, announce: Bool,
-                     mode: Mode, provider: AIProvider, showPreview: (Preview) -> Void) -> AsyncThrowingStream<String, Error> {
+                     mode: Mode, provider: AIProvider, showPreview: (Preview) -> Void,
+                     confirm: (@MainActor (Preview) async -> Bool)? = nil) -> AsyncThrowingStream<String, Error> {
+        let reveal = reveal && !(packet?.isScreen ?? false)
         var questionHits = 0
+        var redactedQuestion = question
         var turns = (history + [ChatMessage(role: .user, text: question)]).map { m -> ChatMessage in
             guard m.role == .user, !reveal else { return m }
             let r = Redactor.redact(m.text)
             questionHits = r.hits // the last user turn is the new question
+            redactedQuestion = r.text
             return ChatMessage(role: .user, text: r.text)
         }
-        if let packet, let first = turns.firstIndex(where: { $0.role == .user }) {
-            let content = reveal ? packet.raw : packet.redacted
+        if reveal { redactedQuestion = Redactor.redact(question).text }
+        let content = packet.map { reveal ? $0.raw : $0.redacted }
+        if let packet, let content, let first = turns.firstIndex(where: { $0.role == .user }) {
             turns[first] = packet.firstMessage(content, question: turns[first].text, imagesAllowed: provider.supportsImages)
-            if announce {
-                showPreview(Preview(providerName: provider.name, image: NSImage(data: content.selectionImage),
-                                    imagesSent: provider.supportsImages && !content.selectionImage.isEmpty,
-                                    selectedText: content.selectedText, memory: packet.memory,
-                                    memoryPages: packet.memoryPages, memoryApps: packet.memoryApps,
-                                    redactions: (reveal ? 0 : packet.redactions + questionHits) + packet.memoryHits, revealed: reveal))
-            }
         }
-        return provider.stream(system: mode.system, messages: turns)
+        // The packet's items count once per conversation (when announced); a new question's items count every time.
+        let outgoing = announce ? [packet?.redacted.selectedText ?? "", packet?.memory ?? "", redactedQuestion] : [redactedQuestion]
+        let highRisk = SendConfirm.highRisk(in: outgoing)
+        let redactions = (reveal ? 0 : (packet?.redactions ?? 0) + questionHits) + (packet?.memoryHits ?? 0)
+        let preview = Preview(providerName: provider.name, image: content.flatMap { NSImage(data: $0.selectionImage) },
+                              imagesSent: provider.supportsImages && !(content?.selectionImage.isEmpty ?? true),
+                              selectedText: content?.selectedText ?? "", memory: packet?.memory ?? "",
+                              memoryPages: packet?.memoryPages ?? 0, memoryApps: packet?.memoryApps ?? 0,
+                              redactions: redactions, revealed: reveal, highRisk: highRisk,
+                              confirmPrompt: SendConfirm.prompt(highRisk: highRisk, total: redactions,
+                                                                revealed: reveal && announce))
+        if packet != nil && announce { showPreview(preview) }
+        let ask = confirm ?? preview.confirmPrompt.map { prompt in { _ in await SendConfirm.shared.ask(prompt) } }
+        guard let ask else { return provider.stream(system: mode.system, messages: turns) }
+        let system = mode.system
+        return AsyncThrowingStream { continuation in
+            let task = Task { @MainActor in
+                guard await ask(preview), !Task.isCancelled else { continuation.finish(); return }
+                do {
+                    for try await delta in provider.stream(system: system, messages: turns) { continuation.yield(delta) }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
     }
 
     func firstMessage(_ content: Content, question: String, imagesAllowed: Bool) -> ChatMessage {

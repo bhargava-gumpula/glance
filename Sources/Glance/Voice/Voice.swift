@@ -57,7 +57,7 @@ enum Voice {
     /// ElevenLabs first when there's a key, then Apple on-device.
     @MainActor
     static func sttChain() -> [SpeechToText] {
-        sttChain(elevenLabsKey: Keychain.get(elevenLabsAccount))
+        Config.localOnly ? [AppleSTT()] : sttChain(elevenLabsKey: Keychain.get(elevenLabsAccount))
     }
 
     static func sttChain(elevenLabsKey: String?) -> [SpeechToText] {
@@ -85,7 +85,7 @@ enum Voice {
     /// Nil when muted. Otherwise ElevenLabs (with a key) backed by the Mac voice, so answers are always spoken.
     @MainActor
     static func tts(muted: Bool, onFallback: @escaping @Sendable (String) -> Void) -> TextToSpeech? {
-        tts(muted: muted, elevenLabsKey: Keychain.get(elevenLabsAccount), voiceID: Config.elevenLabsVoiceID,
+        tts(muted: muted, elevenLabsKey: Config.localOnly ? nil : Keychain.get(elevenLabsAccount), voiceID: Config.elevenLabsVoiceID,
             fallback: MacTTS.shared, onFallback: onFallback)
     }
 
@@ -183,12 +183,12 @@ enum Voice {
 
 // MARK: ElevenLabs
 
-private let elevenLabsSession: URLSession = {
-    let c = URLSessionConfiguration.default
+private let elevenLabsSession: Network.Session = {
+    let c = Network.Configuration.default
     c.timeoutIntervalForRequest = Config.sttTimeoutSeconds
     // Total deadline as well (the request timeout only limits idle time between packets).
     c.timeoutIntervalForResource = Config.sttTimeoutSeconds * 2
-    return URLSession(configuration: c)
+    return Network.session(c)
 }()
 
 struct ElevenLabsSTT: SpeechToText {
@@ -217,7 +217,7 @@ struct ElevenLabsSTT: SpeechToText {
     }
 
     func transcribe(wav: Data) async throws -> String {
-        let (data, resp) = try await elevenLabsSession.data(for: makeRequest(wav: wav), delegate: STTTimings(audioBytes: wav.count))
+        let (data, resp) = try await Network.data(for: makeRequest(wav: wav), session: elevenLabsSession, delegate: STTTimings(audioBytes: wav.count))
         let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200 else { throw VoiceError.elevenLabs(status: status, body: data.prefix(2048)) }
         struct R: Decodable { let text: String }
@@ -280,13 +280,13 @@ struct ElevenLabsTTS: TextToSpeech {
         if chunk.count >= 2 { player.enqueue(chunk.prefix(chunk.count & ~1), generation: generation); if first { firstAudio() } }
     }
 
-    private func open(_ text: String, voice: String) async throws -> (URLSession.AsyncBytes, Int) {
-        let (bytes, resp) = try await URLSession.shared.bytes(for: makeRequest(text: text, voice: voice))
+    private func open(_ text: String, voice: String) async throws -> (Network.Bytes, Int) {
+        let (bytes, resp) = try await Network.bytes(for: makeRequest(text: text, voice: voice))
         return (bytes, (resp as? HTTPURLResponse)?.statusCode ?? 0)
     }
 
     /// The first 2 KB of an error response (ElevenLabs puts the reason in `detail`).
-    private static func readBody(_ bytes: URLSession.AsyncBytes) async -> Data {
+    private static func readBody(_ bytes: Network.Bytes) async -> Data {
         var body = Data()
         do { for try await b in bytes { body.append(b); if body.count >= 2048 { break } } } catch {}
         return body
@@ -326,7 +326,7 @@ actor VoicePicker {
         req.timeoutInterval = Config.ttsTimeoutSeconds
         req.setValue(apiKey, forHTTPHeaderField: "xi-api-key")
         do {
-            let (data, resp) = try await URLSession.shared.data(for: req)
+            let (data, resp) = try await Network.data(for: req)
             let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
             // Status and counts only (never the key): explains an empty pick, e.g. 401 missing_permissions (voices_read).
             log.notice("voice: GET /v2/voices HTTP \(status, privacy: .public); \(Voice.voiceSummary(data), privacy: .public)")
@@ -435,6 +435,15 @@ final class Speaker {
         return shown
     }
 
+    /// Phase 4: a fixed local line (e.g. "I hid 3 sensitive items before sending.") spoken before the answer.
+    /// It doesn't use the answer's spoken-length budget.
+    func say(_ line: String) {
+        let s = Voice.speakable(line)
+        guard tts != nil, !s.isEmpty else { return }
+        queue.append(s)
+        if worker == nil { work() }
+    }
+
     func feed(_ delta: String) {
         guard tts != nil else { return }
         pending += delta
@@ -498,16 +507,16 @@ extension Voice {
     static func prewarmElevenLabs() {
         var req = URLRequest(url: URL(string: "https://api.elevenlabs.io/")!)
         req.httpMethod = "HEAD"
-        elevenLabsSession.dataTask(with: req).resume()
+        Network.fire(req, session: elevenLabsSession)
     }
 }
 
 /// Logs where speech-to-text time goes: connection setup, upload, and waiting for ElevenLabs (the model).
-private final class STTTimings: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+private final class STTTimings: NSObject, Network.TaskDelegate, @unchecked Sendable {
     let audioBytes: Int
     init(audioBytes: Int) { self.audioBytes = audioBytes }
 
-    func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
+    func urlSession(_ session: Network.Session, task: Network.Task, didFinishCollecting metrics: Network.TaskMetrics) {
         guard let m = metrics.transactionMetrics.last else { return }
         func span(_ a: Date?, _ b: Date?) -> Double { guard let a, let b else { return 0 }; return b.timeIntervalSince(a) }
         let connect = span(m.domainLookupStartDate ?? m.connectStartDate, m.connectEndDate)

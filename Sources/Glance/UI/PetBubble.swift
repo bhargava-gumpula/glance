@@ -5,6 +5,9 @@ struct PetBubbleView: View {
     let text: String
     /// The tail sits near the right edge (bubble right-aligned, Pip pointing left).
     var tailOnRight = true
+    /// Phase 4: Send / Cancel buttons under the text while a confirm is waiting.
+    var onSend: (() -> Void)? = nil
+    var onCancel: (() -> Void)? = nil
     let onClose: () -> Void
 
     /// Text area cap: with the tag, padding and tail the bubble stays under ~150 pt.
@@ -45,6 +48,14 @@ struct PetBubbleView: View {
                         .frame(height: Self.maxTextHeight)
                 }
                 .frame(maxHeight: Self.maxTextHeight)
+                if let onSend, let onCancel {
+                    HStack {
+                        Spacer()
+                        Button("Cancel", action: onCancel)
+                        Button("Send", action: onSend).buttonStyle(.borderedProminent)
+                    }
+                    .controlSize(.small)
+                }
             }
             .padding(10)
             .background(Color(nsColor: .textBackgroundColor))
