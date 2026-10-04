@@ -245,9 +245,6 @@ enum SelfTest {
         // Phase 2: engine selection and fallback
         check(Voice.sttChain(elevenLabsKey: "k").map(\.name) == ["ElevenLabs", "on-device"], "STT: ElevenLabs first, Apple fallback")
         check(Voice.sttChain(elevenLabsKey: nil).map(\.name) == ["on-device"], "STT: no key → Apple only")
-        check(Voice.tts(muted: false, elevenLabsKey: "k", voiceID: "v") is ElevenLabsTTS, "TTS: ElevenLabs when on")
-        check(Voice.tts(muted: true, elevenLabsKey: "k", voiceID: "v") == nil
-              && Voice.tts(muted: false, elevenLabsKey: nil, voiceID: "v") == nil, "TTS: off when muted or no key")
         func heard(_ chain: [SpeechToText]) -> String {
             let box = ResultBox()
             let done = DispatchSemaphore(value: 0)
@@ -457,6 +454,33 @@ enum SelfTest {
         check(Voice.usableVoice(fromVoicesJSON: voices([lib, legacy, mine]), excluding: "x")?.id == "mine", "voice pick: own voice when no stock voice")
         check(Voice.usableVoice(fromVoicesJSON: voices([lib, legacy]), excluding: "x") == nil
               && Voice.usableVoice(fromVoicesJSON: voices([stock]), excluding: "stock") == nil, "voice pick: never library, legacy or the refused voice")
+        check(Voice.tts(muted: true, elevenLabsKey: "k", voiceID: "v", fallback: FakeTTS()) == nil, "TTS: off when muted")
+        check((Voice.tts(muted: false, elevenLabsKey: "k", voiceID: "v", fallback: FakeTTS()) as? FallbackTTS)?.primary is ElevenLabsTTS,
+              "TTS: ElevenLabs first when there's a key")
+        // Mac voice fallback: answers are always spoken
+        func run(_ tts: TextToSpeech, _ sentences: [String]) {
+            let done = DispatchSemaphore(value: 0)
+            Task.detached { for s in sentences { try? await tts.speak(s) { } }; done.signal() }
+            _ = done.wait(timeout: .now() + 5)
+        }
+        let mac1 = FakeTTS(), notices1 = ResultBox()
+        run(Voice.tts(muted: false, elevenLabsKey: nil, voiceID: "v", fallback: mac1) { notices1.value += "[\($0)]" }!, ["Hi."])
+        check(mac1.spoken == ["Hi."] && notices1.value == "[no ElevenLabs key]", "TTS: no key → Mac voice, with a notice")
+        let offline = FailingTTS(URLError(.notConnectedToInternet)), mac2 = FakeTTS()
+        run(FallbackTTS(primary: offline, fallback: mac2, onFallback: { _ in }), ["One.", "Two."])
+        check(mac2.spoken == ["One.", "Two."] && offline.calls == 2, "TTS: offline → Mac voice, ElevenLabs retried next sentence")
+        let refused = FailingTTS(VoiceError.noUsableVoice), mac3 = FakeTTS(), notices3 = ResultBox()
+        run(FallbackTTS(primary: refused, fallback: mac3, onFallback: { notices3.value += "[\($0)]" }), ["One.", "Two."])
+        check(mac3.spoken == ["One.", "Two."] && refused.calls == 1 && notices3.value.contains("No ElevenLabs voice"),
+              "TTS: refused (402 / no usable voice) → Mac voice for the rest of the launch")
+        check(MacTTS.rank(language: "en-IE", quality: 3, novelty: false, preferred: "en-IE")!
+              > MacTTS.rank(language: "en-US", quality: 2, novelty: false, preferred: "en-IE")!
+              && MacTTS.rank(language: "en-US", quality: 1, novelty: true, preferred: "en-US") == nil
+              && MacTTS.rank(language: "fr-FR", quality: 3, novelty: false, preferred: "en-US") == nil, "Mac voice: best English voice, no novelty")
+        check(VoicePicker.merge(listed: [], refused: "21m00Tcm4TlvDq8ikWAM").first == "EXAVITQu4vr4xnSDxMaL"
+              && VoicePicker.merge(listed: ["mine", "EXAVITQu4vr4xnSDxMaL"], refused: "EXAVITQu4vr4xnSDxMaL") == ["mine"] + VoicePicker.stockVoiceIDs.dropFirst(),
+              "voice pick: stock voices tried when the list is unreadable, never the refused one")
+        check(Voice.voiceSummary(voices([lib, legacy, stock])) == "3 voices: premade 2, professional 1, legacy 1", "voice list summary for the log")
 
         check(Voice.splitSpoken("**Say:**\nYes, it is.\n\nMore.") == .summary(say: "Yes, it is.", done: true, shown: "More.")
               && Voice.splitSpoken("_Say:_ Yes.\nMore.") == .summary(say: "Yes.", done: true, shown: "More."), "spoken: marker on its own line or wrapped in markdown")
@@ -540,5 +564,19 @@ private final class FakeTTS: TextToSpeech, @unchecked Sendable {
         firstAudio()
     }
     private func record(_ text: String) { lock.lock(); _spoken.append(text); lock.unlock() }
+    func stop() {}
+}
+
+/// Speech that always fails with `error`, counting calls.
+private final class FailingTTS: TextToSpeech, @unchecked Sendable {
+    let error: Error
+    private let lock = NSLock()
+    private var _calls = 0
+    init(_ error: Error) { self.error = error }
+    var calls: Int { lock.withLock { _calls } }
+    func speak(_ text: String, firstAudio: @escaping @Sendable () -> Void) async throws {
+        lock.withLock { _calls += 1 }
+        throw error
+    }
     func stop() {}
 }

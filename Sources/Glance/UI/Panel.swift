@@ -143,7 +143,11 @@ final class ChatModel: ObservableObject {
     @Published var status = "Drag a box over anything, then ask about it."
     /// Hold-to-talk: true while ⌥Space is held, `transcribing` until the text is back.
     @Published var listening = false {
-        didSet { if listening { speaker.stop() } } // barge-in only once the press counts as a hold, not on a tap
+        didSet {
+            guard listening else { return }
+            speaker.stop() // barge-in only once the press counts as a hold, not on a tap
+            if Keychain.has(Voice.elevenLabsAccount) { Voice.prewarmElevenLabs() }
+        }
     }
     @Published var transcribing = false
     /// The answer being streamed, unsplit, so Pip can show and time its spoken line.
@@ -182,10 +186,11 @@ final class ChatModel: ObservableObject {
 
     /// Voice problems are shown once each per launch, so a broken voice doesn't repeat under every answer.
     private var voiceNotices: Set<String> = []
-    private func voiceNotice(_ text: String) {
+    private func voiceNotice(_ text: String, detail: String? = nil) {
         guard voiceNotices.insert(text).inserted else { return }
-        turns.append(Turn(kind: .notice, text: text))
+        turns.append(Turn(kind: .notice, text: detail.map { "\(text) (\($0))" } ?? text))
     }
+    nonisolated static let macVoiceNotice = "Using Mac voice."
 
     func discardRecording() {
         _ = recorder.stop()
@@ -322,9 +327,8 @@ final class ChatModel: ObservableObject {
             }
             turns.append(Turn(kind: .assistant, text: ""))
             let index = turns.count - 1
-            let tts = Voice.tts(muted: muted)
-            if tts == nil, !muted, !Keychain.has(Voice.elevenLabsAccount) {
-                voiceNotice("Add an ElevenLabs key in Settings to hear answers, or mute with the speaker button.")
+            let tts = Voice.tts(muted: muted) { reason in
+                Task { @MainActor [weak self] in self?.voiceNotice(Self.macVoiceNotice, detail: reason) }
             }
             speaker.onError = { [weak self] error in self?.voiceNotice(error.localizedDescription) }
             speaker.begin(tts) {

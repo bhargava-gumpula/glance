@@ -17,12 +17,14 @@ protocol TextToSpeech: Sendable {
 enum VoiceError: LocalizedError {
     case noMicrophone, noSpeechRecognizer, notAuthorized, nothingHeard
     case allEnginesFailed([String])
+    case noUsableVoice
     case elevenLabs(status: Int, code: String, message: String)
 
     var errorDescription: String? {
         switch self {
         case .noMicrophone: "Glance can't use the microphone. Check Permissions…"
         case .allEnginesFailed(let errors): errors.joined(separator: " ")
+        case .noUsableVoice: "No ElevenLabs voice on this account can be used through the API."
         case .noSpeechRecognizer: "On-device speech recognition isn't available on this Mac."
         case .notAuthorized: "Allow Speech Recognition for Glance in System Settings › Privacy & Security."
         case .nothingHeard: "Didn't catch that. Hold \(Config.hotkeyDescription) and speak."
@@ -80,22 +82,28 @@ enum Voice {
         throw VoiceError.allEnginesFailed(errors)
     }
 
-    /// ElevenLabs when speaking is on and there's a key; otherwise answers stay text-only.
+    /// Nil when muted. Otherwise ElevenLabs (with a key) backed by the Mac voice, so answers are always spoken.
     @MainActor
-    static func tts(muted: Bool) -> TextToSpeech? {
-        tts(muted: muted, elevenLabsKey: Keychain.get(elevenLabsAccount), voiceID: Config.elevenLabsVoiceID)
+    static func tts(muted: Bool, onFallback: @escaping @Sendable (String) -> Void) -> TextToSpeech? {
+        tts(muted: muted, elevenLabsKey: Keychain.get(elevenLabsAccount), voiceID: Config.elevenLabsVoiceID,
+            fallback: MacTTS.shared, onFallback: onFallback)
     }
 
-    static func tts(muted: Bool, elevenLabsKey: String?, voiceID: String) -> TextToSpeech? {
-        guard !muted, let key = elevenLabsKey, !key.isEmpty else { return nil }
-        return ElevenLabsTTS(apiKey: key, voiceID: voiceID)
+    static func tts(muted: Bool, elevenLabsKey: String?, voiceID: String, fallback: TextToSpeech,
+                    onFallback: @escaping @Sendable (String) -> Void = { _ in }) -> TextToSpeech? {
+        guard !muted else { return nil }
+        let primary = elevenLabsKey.flatMap { $0.isEmpty ? nil : ElevenLabsTTS(apiKey: $0, voiceID: voiceID) }
+        return FallbackTTS(primary: primary, fallback: fallback, onFallback: onFallback)
     }
 
     /// From a GET /v2/voices response: a voice the account can use through the API. Prefers stock (premade)
     /// voices, then the account's own generated or cloned ones; never retired (legacy) or Voice Library voices.
     static func usableVoice(fromVoicesJSON data: Data, excluding: String) -> (id: String, name: String)? {
-        guard let voices = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["voices"] as? [[String: Any]]
-        else { return nil }
+        usableVoices(fromVoicesJSON: data, excluding: excluding).first
+    }
+
+    /// All usable voices, best first.
+    static func usableVoices(fromVoicesJSON data: Data, excluding: String) -> [(id: String, name: String)] {
         func rank(_ v: [String: Any]) -> Int? {
             guard v["is_legacy"] as? Bool != true, let id = v["voice_id"] as? String, id != excluding else { return nil }
             switch v["category"] as? String {
@@ -104,9 +112,22 @@ enum Voice {
             default: return nil
             }
         }
-        let best = voices.compactMap { v in rank(v).map { ($0, v) } }.min { $0.0 < $1.0 }?.1
-        guard let id = best?["voice_id"] as? String else { return nil }
-        return (id, best?["name"] as? String ?? id)
+        return voiceList(data).compactMap { v in rank(v).map { ($0, v) } }.sorted { $0.0 < $1.0 }
+            .map { ($0.1["voice_id"] as? String ?? "", $0.1["name"] as? String ?? "") }
+    }
+
+    /// "12 voices: premade 0, professional 9, generated 1, legacy 2" for the log (no names, no keys).
+    static func voiceSummary(_ data: Data) -> String {
+        let voices = voiceList(data)
+        var counts: [String: Int] = [:]
+        for v in voices { counts[v["category"] as? String ?? "?", default: 0] += 1 }
+        let legacy = voices.filter { $0["is_legacy"] as? Bool == true }.count
+        let parts = counts.sorted { $0.key < $1.key }.map { "\($0.key) \($0.value)" } + ["legacy \(legacy)"]
+        return "\(voices.count) voices: " + parts.joined(separator: ", ")
+    }
+
+    private static func voiceList(_ data: Data) -> [[String: Any]] {
+        (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["voices"] as? [[String: Any]] ?? []
     }
 
     /// Splits off complete sentences (end mark followed by whitespace, or a newline); returns them and the rest.
@@ -196,7 +217,7 @@ struct ElevenLabsSTT: SpeechToText {
     }
 
     func transcribe(wav: Data) async throws -> String {
-        let (data, resp) = try await elevenLabsSession.data(for: makeRequest(wav: wav))
+        let (data, resp) = try await elevenLabsSession.data(for: makeRequest(wav: wav), delegate: STTTimings(audioBytes: wav.count))
         let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200 else { throw VoiceError.elevenLabs(status: status, body: data.prefix(2048)) }
         struct R: Decodable { let text: String }
@@ -223,16 +244,24 @@ struct ElevenLabsTTS: TextToSpeech {
 
     func speak(_ text: String, firstAudio: @escaping @Sendable () -> Void) async throws {
         let picker = VoicePicker.shared
+        if await picker.isExhausted(voiceID) { throw VoiceError.noUsableVoice }
         var voice = await picker.voice(for: voiceID)
         var (bytes, status) = try await open(text, voice: voice)
         if status != 200 {
             let error = await VoiceError.elevenLabs(status: status, body: Self.readBody(bytes))
             // The voice isn't usable with this account (e.g. a library or retired voice on the free plan):
-            // switch to one the account can use, once, and retry.
-            guard error.isVoiceProblem, let replacement = try? await picker.replace(voiceID, apiKey: apiKey) else { throw error }
-            voice = replacement
-            (bytes, status) = try await open(text, voice: voice)
-            guard status == 200 else { throw await VoiceError.elevenLabs(status: status, body: Self.readBody(bytes)) }
+            // try voices the account can use, once per launch, and keep the first that works.
+            guard error.isVoiceProblem else { throw error }
+            var found = false
+            for candidate in await picker.candidates(excluding: voice, apiKey: apiKey) {
+                (bytes, status) = try await open(text, voice: candidate)
+                if status == 200 { voice = candidate; found = true; break }
+                let next = await VoiceError.elevenLabs(status: status, body: Self.readBody(bytes))
+                log.notice("voice: candidate \(candidate, privacy: .public) refused (\(next.localizedDescription, privacy: .public))")
+                guard next.isVoiceProblem else { throw next }
+            }
+            guard found else { await picker.markExhausted(voiceID); throw error }
+            await picker.remember(voiceID, works: voice)
         }
         let player = PCMPlayer.shared
         let generation = player.generation
@@ -270,26 +299,49 @@ struct ElevenLabsTTS: TextToSpeech {
 /// Free accounts can't use Voice Library voices via the API, and retired voices like "Rachel" route to library ones.
 actor VoicePicker {
     static let shared = VoicePicker()
+    /// ElevenLabs stock voices (Sarah, George, Will, Roger, Laura, Jessica), tried when the voice list can't be read.
+    static let stockVoiceIDs = ["EXAVITQu4vr4xnSDxMaL", "JBFqnCBsd6RMkjVDRZzb", "bIHbv24MWmeRgasZH58o",
+                                "CwhRBWXzGAHq8TQ4Fs17", "FGY2WhTYpPnrIDTdsKH5", "cgSgspJ2msm6clMCkdW9"]
     private var replacements: [String: String] = [:]
+    private var exhausted: Set<String> = []
 
     func voice(for id: String) -> String { replacements[id] ?? id }
+    func isExhausted(_ id: String) -> Bool { exhausted.contains(id) }
+    func markExhausted(_ id: String) {
+        exhausted.insert(id)
+        log.error("voice: no ElevenLabs voice usable through the API on this account; using the Mac voice")
+    }
 
-    func replace(_ id: String, apiKey: String) async throws -> String? {
-        if let known = replacements[id] { return known }
-        var req = URLRequest(url: URL(string: "https://api.elevenlabs.io/v2/voices?page_size=100&voice_type=non-community")!)
+    func remember(_ id: String, works voice: String) {
+        replacements[id] = voice
+        // Remember it; Settings shows the voice in use and can change it.
+        UserDefaults.standard.set(voice, forKey: "elevenLabsVoiceID")
+        log.notice("voice: switched to ElevenLabs voice \(voice, privacy: .public)")
+    }
+
+    /// Voices to try instead of a refused one: the account's usable voices from GET /v2/voices, then stock voices.
+    func candidates(excluding refused: String, apiKey: String) async -> [String] {
+        var ids: [String] = []
+        var req = URLRequest(url: URL(string: "https://api.elevenlabs.io/v2/voices?page_size=100")!)
         req.timeoutInterval = Config.ttsTimeoutSeconds
         req.setValue(apiKey, forHTTPHeaderField: "xi-api-key")
-        let (data, resp) = try await URLSession.shared.data(for: req)
-        guard (resp as? HTTPURLResponse)?.statusCode == 200, let pick = Voice.usableVoice(fromVoicesJSON: data, excluding: id)
-        else {
-            log.error("voice: no ElevenLabs voice usable through the API on this account")
-            return nil
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            // Status and counts only (never the key): explains an empty pick, e.g. 401 missing_permissions (voices_read).
+            log.notice("voice: GET /v2/voices HTTP \(status, privacy: .public); \(Voice.voiceSummary(data), privacy: .public)")
+            if status == 200 { ids = Voice.usableVoices(fromVoicesJSON: data, excluding: refused).map(\.id) }
+        } catch {
+            log.error("voice: GET /v2/voices failed (\(error.localizedDescription, privacy: .public))")
         }
-        replacements[id] = pick.id
-        // Remember it; Settings shows the voice in use and can change it.
-        UserDefaults.standard.set(pick.id, forKey: "elevenLabsVoiceID")
-        log.notice("voice: switched to ElevenLabs voice \(pick.name, privacy: .public) (\(pick.id, privacy: .public))")
-        return pick.id
+        return Self.merge(listed: ids, refused: refused)
+    }
+
+    /// The account's usable voices first, then every stock voice not already listed, never the refused one.
+    static func merge(listed: [String], refused: String) -> [String] {
+        var ids = listed.filter { $0 != refused }
+        for id in stockVoiceIDs where id != refused && !ids.contains(id) { ids.append(id) }
+        return ids
     }
 }
 
@@ -437,5 +489,32 @@ final class Speaker {
             }
             if !Task.isCancelled { self?.worker = nil }
         }
+    }
+}
+
+extension Voice {
+    /// Opens the TLS connection to ElevenLabs while the user is still talking, so the upload at release doesn't
+    /// pay for DNS + TCP + TLS. Sends no key and no audio.
+    static func prewarmElevenLabs() {
+        var req = URLRequest(url: URL(string: "https://api.elevenlabs.io/")!)
+        req.httpMethod = "HEAD"
+        elevenLabsSession.dataTask(with: req).resume()
+    }
+}
+
+/// Logs where speech-to-text time goes: connection setup, upload, and waiting for ElevenLabs (the model).
+private final class STTTimings: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    let audioBytes: Int
+    init(audioBytes: Int) { self.audioBytes = audioBytes }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
+        guard let m = metrics.transactionMetrics.last else { return }
+        func span(_ a: Date?, _ b: Date?) -> Double { guard let a, let b else { return 0 }; return b.timeIntervalSince(a) }
+        let connect = span(m.domainLookupStartDate ?? m.connectStartDate, m.connectEndDate)
+        let upload = span(m.requestStartDate, m.requestEndDate)
+        let server = span(m.requestEndDate, m.responseStartDate)
+        let total = metrics.taskInterval.duration
+        let reused = m.isReusedConnection
+        log.notice("voice: STT \(self.audioBytes / 1000, privacy: .public) kB; connect \(connect, format: .fixed(precision: 2), privacy: .public) s (reused \(reused, privacy: .public)), upload \(upload, format: .fixed(precision: 2), privacy: .public) s, ElevenLabs \(server, format: .fixed(precision: 2), privacy: .public) s, total \(total, format: .fixed(precision: 2), privacy: .public) s")
     }
 }
