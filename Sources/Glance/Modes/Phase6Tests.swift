@@ -61,6 +61,20 @@ enum Phase6Tests {
         check(reply?.check == "not_yet" && reply?.observed == "Sheet still open.", "guide v2: check/observed decode")
         check(Mode.guide.system.contains("LAST STEP") && Mode.guide.system.contains("not_yet"), "guide v2: prompt explains check")
 
+        // 5b. not_yet after a re-check restores the step (Phase 5 review): arm → pause → keepWaiting
+        let (kept, cleared) = MainActor.assumeIsolated {
+            let auto = GuideAuto(session: nil, pid: 0)
+            auto.arm(step: GuideStep(status: "step", say: "Click Next."), target: .none)
+            auto.pause()
+            let kept = auto.paused && auto.keepWaiting() && !auto.paused
+            auto.disarm()
+            let cleared = !auto.keepWaiting()
+            auto.stop()
+            return (kept, cleared)
+        }
+        check(kept, "guide v2: not_yet after pause keeps the step")
+        check(cleared, "guide v2: nothing to keep after disarm")
+
         // 6. Kill switch: on by default, a UserDefaults false turns v2 off
         let key = "guideAutoRecheck"
         let saved = UserDefaults.standard.object(forKey: key)

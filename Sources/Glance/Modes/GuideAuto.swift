@@ -5,7 +5,7 @@ import ApplicationServices
 /// the model only when those can't tell. Exists only while `Config.guideAutoRecheck` is on.
 @MainActor
 final class GuideAuto {
-    private unowned let session: GuideSession
+    private weak var session: GuideSession?
     private let pid: pid_t
     private var watcher: GuideWatcher?
     private var step: GuideStep?
@@ -16,7 +16,10 @@ final class GuideAuto {
     /// The correction says "Press Esc", so the next Esc soon after it must not stop Guide.
     var lastCorrection: Date?
 
-    init(session: GuideSession, pid: pid_t) {
+    /// A model call is in flight: verdicts wait, but the step is kept so a "not_yet" reply can restore it.
+    private(set) var paused = false
+
+    init(session: GuideSession?, pid: pid_t) {
         self.session = session
         self.pid = pid
     }
@@ -44,8 +47,9 @@ final class GuideAuto {
     func arm(step s: GuideStep, target t: GuideTarget) {
         step = s
         target = t
+        paused = false
         work?.cancel()
-        if watcher == nil {
+        if watcher == nil, session != nil {
             let w = GuideWatcher(pid: pid, ignoreClicks: { [weak session] in session?.menuBusy ?? false }) { [weak self] o in
                 self?.settled(o)
             }
@@ -56,9 +60,15 @@ final class GuideAuto {
         poke()
     }
 
-    /// No step to watch (done, blocked, a model call in flight).
+    /// No step to watch (done, blocked, the session ended).
     func disarm() {
         step = nil
+        pause()
+    }
+
+    /// Stop judging and nudging while Guide works on the next step; keep the step and target for "not_yet".
+    func pause() {
+        paused = true
         work?.cancel()
         nudge?.cancel()
         watcher?.reset()
@@ -76,9 +86,9 @@ final class GuideAuto {
         guard let say = step?.say, !say.isEmpty else { return }
         nudge = Task { [weak self] in
             try? await Task.sleep(for: .seconds(Config.guideNudgeSeconds))
-            guard let self, !Task.isCancelled, self.step != nil else { return }
+            guard let self, !Task.isCancelled, self.step != nil, !self.paused else { return }
             log.notice("guide: idle nudge")
-            self.session.nudge(say)
+            self.session?.nudge(say)
         }
     }
 
@@ -92,23 +102,23 @@ final class GuideAuto {
 
     /// The current step worked (a verdict, or MenuFollower finished a non-last menu path).
     func stepSucceeded() {
-        guard let s = step else { return }
-        disarm()
+        guard let s = step, !paused else { return }
+        pause()
         log.notice("guide: step succeeded locally")
-        if s.last == true { session.finishLocally(s); return }
+        if s.last == true { disarm(); session?.finishLocally(s); return }
         advance(from: s, markDone: true)
     }
 
     /// Skip: progress is already noted; move to `next[0]` or ask the model.
     func skipped(_ s: GuideStep) {
-        disarm()
+        pause()
         advance(from: s, markDone: false)
     }
 
     // MARK: Internals
 
     private func settled(_ o: GuideWatcher.Observation) {
-        guard let s = step else { return }
+        guard let s = step, !paused else { return }
         poke()
         let isMenu: Bool
         let rect: CGRect?
@@ -126,10 +136,10 @@ final class GuideAuto {
         case .wrong(let opened):
             let label = s.label ?? Guide.describe(s)
             lastCorrection = Date()
-            session.correct(GuideVerdict.correction(opened: opened, label: label), target: target)
+            session?.correct(GuideVerdict.correction(opened: opened, label: label), target: target)
             watcher?.reset()
         case .success: stepSucceeded()
-        case .inconclusive: disarm(); recheck(s)
+        case .inconclusive: pause(); recheck(s)
         case .ignore: break
         }
     }
@@ -143,11 +153,11 @@ final class GuideAuto {
             if let (next, i) = Self.predicted(s, controls: snap.controls.map(\.label)),
                let f = AX.frame(of: snap.controls[i].element), AX.isUsable(f, screens: AX.screenFrames) {
                 log.notice("guide: local advance → \(next.label ?? "-", privacy: .public)")
-                self.session.advanceLocally(next, target: .ax(f), snap: snap, finished: markDone ? s : nil)
+                self.session?.advanceLocally(next, target: .ax(f), snap: snap, finished: markDone ? s : nil)
                 return
             }
             log.notice("guide: plan ran out or didn't match; re-check")
-            if markDone { self.session.noteDone(s) }
+            if markDone { self.session?.noteDone(s) }
             self.recheck(s)
         }
     }
@@ -155,7 +165,7 @@ final class GuideAuto {
     private func recheck(_ s: GuideStep) {
         guard let wait = limiter.delay(now: Date()) else {
             log.notice("guide: re-check limit reached; back to tap or next")
-            session.fallBackToV1()
+            session?.fallBackToV1()
             return
         }
         work?.cancel()
@@ -164,7 +174,7 @@ final class GuideAuto {
             guard let self, !Task.isCancelled else { return }
             self.limiter.record(now: Date())
             log.notice("guide: model re-check \(self.limiter.count, privacy: .public)")
-            self.session.recheck(lastStep: Self.lastStepLine(s))
+            self.session?.recheck(lastStep: Self.lastStepLine(s))
         }
     }
 

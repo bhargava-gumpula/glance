@@ -411,7 +411,7 @@ final class GuideSession {
     }
 
     private func runStep(userText: String?, lastStep: String? = nil) {
-        auto?.disarm()
+        auto?.pause() // keeps the step, so a re-check's "not_yet" can restore it
         task?.cancel()
         follower?.stop()
         follower = nil

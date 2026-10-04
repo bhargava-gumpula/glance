@@ -208,7 +208,7 @@ Built so far:
 - **Verdict** (`GuideVerdict`): click inside the target (4 pt slack) + any change → success; nothing changed → inconclusive; a click elsewhere in the app that opened a window/sheet/menu → spoken "That opened X. Press Esc, then click Y." and Pip re-points (nothing sent; the next Esc within 15 s doesn't stop Guide); a change without a click → inconclusive; other apps and stray clicks → ignored. Menu-path steps stay with MenuFollower, whose `.done` now counts as success.
 - **After a success** (`Modes/GuideAuto.swift`): `last` → Done; else a fresh AX snapshot and `next[0]` is shown locally only when exactly one control has the exact normalized label (never "contains"; menu next → model); otherwise a model re-check with PROGRESS + `LAST STEP: click "X" — expected: Y`. Reply `check`: ok/wrong → show the step; not_yet → keep the highlight, silent. Re-checks: one per 3 s, 20 per session (then v1), on top of Phase 5's consent limits; Pip shows "Checking…" (not spoken).
 - **Skip** (v2): noted in progress, then `next[0]` locally or the model. **20 s idle nudge** speaks the current step once (restarts on any activity). Why/Stop unchanged.
-- Selftest: 33 v2 checks (`Modes/Phase6Tests.swift`): hit test, verdict, exact-match advance, rate limits, LAST STEP/check, kill switch. 425 total pass.
+- Selftest: 35 v2 checks (`Modes/Phase6Tests.swift`): hit test, verdict, exact-match advance, rate limits, LAST STEP/check, kill switch, not_yet keeps the step. 427 total pass.
 
 ### Phase 6 check (owner; needs `./scripts/build-app.sh` from `~/Projects/glance-phase6`)
 - [x] `./scripts/selftest.sh` passes (agent)
