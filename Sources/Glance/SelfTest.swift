@@ -210,10 +210,12 @@ enum SelfTest {
             let done = DispatchSemaphore(value: 0)
             MainActor.assumeIsolated {
                 let stream = ContextPacket.send(cardPacket, history: [], question: question, reveal: reveal, announce: false,
-                                                mode: .explain, provider: recorder) { _ in }
+                                                mode: .explain, provider: recorder, showPreview: { _ in }, confirm: { _ in true })
                 Task.detached { for try await _ in stream {}; done.signal() }
             }
-            _ = done.wait(timeout: .now() + 5)
+            // send()'s confirm step runs on the main actor: pump the run loop instead of blocking it.
+            let end = Date().addingTimeInterval(5)
+            while done.wait(timeout: .now()) == .timedOut && Date() < end { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
             return recorder.lastText
         }
         let normal = sent(reveal: false, question: "Email me at a@b.ie")
@@ -460,10 +462,12 @@ enum SelfTest {
             let done = DispatchSemaphore(value: 0)
             MainActor.assumeIsolated {
                 let stream = ContextPacket.send(memPacket, history: [], question: "Don't redact", reveal: true, announce: false,
-                                                mode: .explain, provider: recorder) { _ in }
+                                                mode: .explain, provider: recorder, showPreview: { _ in }, confirm: { _ in true })
                 Task.detached { for try await _ in stream {}; done.signal() }
             }
-            _ = done.wait(timeout: .now() + 5)
+            // send()'s confirm step runs on the main actor: pump the run loop instead of blocking it.
+            let end = Date().addingTimeInterval(5)
+            while done.wait(timeout: .now()) == .timedOut && Date() < end { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
             return recorder.lastText
         }()
         check(memSent.contains("[CARD]") && !memSent.contains("4242"), "memory: stays redacted even when the user reveals")

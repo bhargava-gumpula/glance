@@ -114,8 +114,8 @@ struct ContextPacket: Sendable {
         if let packet, let content, let first = turns.firstIndex(where: { $0.role == .user }) {
             turns[first] = packet.firstMessage(content, question: turns[first].text, imagesAllowed: provider.supportsImages)
         }
-        // The packet's items count once per conversation (when announced); a new question's items count every time.
-        let outgoing = announce ? [packet?.redacted.selectedText ?? "", packet?.memory ?? "", redactedQuestion] : [redactedQuestion]
+        // Owner: every message is checked on its own, so a follow-up that still carries the selection/memory asks again.
+        let outgoing = [packet?.redacted.selectedText ?? "", packet?.memory ?? "", redactedQuestion]
         let highRisk = SendConfirm.highRisk(in: outgoing)
         let redactions = (reveal ? 0 : (packet?.redactions ?? 0) + questionHits) + (packet?.memoryHits ?? 0)
         let preview = Preview(providerName: provider.name, image: content.flatMap { NSImage(data: $0.selectionImage) },

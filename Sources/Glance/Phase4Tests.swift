@@ -61,7 +61,7 @@ enum Phase4Tests {
             }
         }
         let cancelled = trySend(card, answer: false)
-        check(cancelled.asked == "Hid 1 card number. Send?", "send(): a card asks Send/Cancel  → \(cancelled.asked ?? "nil")")
+        check(cancelled.asked?.hasPrefix("Hid 1 card number") == true && cancelled.asked?.hasSuffix("Send?") == true, "send(): a card asks Send/Cancel  → \(cancelled.asked ?? "nil")")
         check(cancelled.sent.isEmpty && cancelled.text.isEmpty, "send(): Cancel sends nothing")
         let approved = trySend(card, answer: true)
         check(approved.sent.contains("[CARD]") && !approved.sent.contains("4242"), "send(): Send sends the redacted packet")
