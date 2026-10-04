@@ -437,11 +437,12 @@ struct PanelView: View {
                 HStack {
                     Label(prompt, systemImage: "lock.shield").font(.callout.bold())
                     Spacer()
-                    Button("Cancel") { confirm.answer(false) }.keyboardShortcut(.cancelAction)
+                    Button("Cancel") { confirm.answer(false) }.keyboardShortcut(.cancelAction).buttonStyle(.bordered)
                     Button("Send") { confirm.answer(true) }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
                 }
-                .padding(8)
-                .background(Color.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 8))
+                .padding(10)
+                .background(Color.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.blue.opacity(0.25)))
                 .help("Say \u{201C}send\u{201D} or \u{201C}cancel\u{201D} with \(Config.hotkeyDescription) too")
             }
             HStack {

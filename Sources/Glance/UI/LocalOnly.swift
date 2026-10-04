@@ -5,11 +5,12 @@ import SwiftUI
 struct LocalOnlyBadge: View {
     var body: some View {
         Label("Local only", systemImage: "lock.laptopcomputer")
-            .font(.system(size: 10, weight: .bold))
+            .font(.caption.weight(.semibold))
             .padding(.horizontal, 6).padding(.vertical, 2)
-            .foregroundStyle(.white)
-            .background(Color.green.opacity(0.85), in: Capsule())
-            .help("Local only: AI, speech and voice run on this Mac. Nothing is sent over the internet.")
+            .foregroundStyle(.green)
+            .background(Color.green.opacity(0.15), in: Capsule())
+            .background(Color(nsColor: .windowBackgroundColor), in: Capsule()) // readable over any screen behind Pip
+            .help("Nothing leaves this Mac.")
             .accessibilityLabel("Local only mode is on")
     }
 }
