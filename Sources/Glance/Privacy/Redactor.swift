@@ -20,7 +20,7 @@ enum Redactor {
         Rule(tag: "[TOKEN]", regex: re(#"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"#)),
         Rule(tag: "[TOKEN]", regex: re(#"(?i)\bbearer\s+([A-Za-z0-9._~+/=-]{20,})"#), group: 1),
         // Phase 4: passwords and PINs get their own tags, so the Send/Cancel step can name them.
-        Rule(tag: "[PASSWORD]", regex: re(#"(?i)(?<![A-Za-z0-9_])(?:password|passwd|pwd|passcode|pass code)\s*[:=]\s*([^\n]+)"#), group: 1),
+        Rule(tag: "[PASSWORD]", regex: re(#"(?i)(?<![A-Za-z0-9_])(?:password|passwd|pwd|passcode|pass code)(?:\s*(?:[:=\-]|\bis\b|\bwas\b))+\s*([^\s][^\n]*)"#), group: 1),
         Rule(tag: "[PIN]", regex: re(#"(?i)\b(?:cvv2?|cvc|security code|pin)\b(?:\s*(?:no\.?|number|code))?(?:\s+(?:is|was))?\s*[:#=]?\s*(\d{3,8})\b"#), group: 1),
         Rule(tag: "[SECRET]", regex: re(#"(?i)(?<![A-Za-z0-9_])(?:[A-Za-z0-9]+_)*(?:password|passwd|pwd|passcode|pass code|secret|api[ _-]?key|access[ _]?key|access token|auth token|token|private[ _]?key|seed phrase|recovery phrase|secret phrase|mnemonic|security answer)(?:_[A-Za-z0-9]+)*\s*[:=]\s*([^\n]+)"#), group: 1, isMatch: { !isTag($0) }),
         // Crypto wallets and private keys

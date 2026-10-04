@@ -10,6 +10,12 @@ enum Phase4Tests {
     }
 
     static func run(_ check: (Bool, String) -> Void) {
+        // Owner bug: "password is : value" and "password is value" must be redacted too.
+        for t in ["my bank password is : hello_123", "my password is hello_123", "Password: hello_123", "pwd = hello_123"] {
+            let r = Redactor.redact(t).text
+            check(r.contains("[PASSWORD]") && !r.contains("hello_123"), "password phrasing redacted: \(t) → \(r)")
+        }
+        check(!Redactor.redact("Forgot your password? Reset it here").text.contains("[PASSWORD]"), "password: plain sentence untouched")
         // Send/Cancel policy
         let hr = SendConfirm.highRisk(in: ["Card [CARD] and [CARD]", "IBAN [IBAN], mail [EMAIL]"])
         check(hr == ["[CARD]": 2, "[IBAN]": 1], "confirm: counts high-risk tags only")
