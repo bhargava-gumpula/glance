@@ -74,7 +74,7 @@ Built so far:
 - **Hold ⌥Space to talk** (≥ 0.3 s; a shorter tap toggles the panel as before, now on key-up). Recording starts on key-down so the first word isn't clipped; the panel shows "Listening…" then "Transcribing…". Holding again stops the current spoken answer (barge-in) and a spoken question replaces one still being answered.
 - **Speech-to-text:** `Voice/Voice.swift`, protocol `SpeechToText`: ElevenLabs `scribe_v2` (16 kHz mono WAV, 6 s timeout) → on any failure Apple `SFSpeechRecognizer` (on-device when supported). Without an ElevenLabs key it's Apple only. Questions transcribed on-device show "(on-device)".
 - **Spoken vs on-screen answers (owner request):** every answer opens with a "Say: …" line (1-2 short sentences) that is read aloud and hidden; the full, more detailed answer is shown on screen. If a model skips the line, the start of the answer is spoken instead (`Voice.splitSpoken`, `Speaker.answer`, prompt in `Modes/Mode.swift`).
-- **Spoken answers:** protocol `TextToSpeech`: ElevenLabs HTTP stream (`eleven_flash_v2_5`, `pcm_24000`) per sentence, started as soon as the first full sentence arrives, played through `PCMPlayer` (`Voice/Audio.swift`). Short version only: first sentence plus more while under 280 characters; markdown stripped. TTS failure → silent, text only. Speaker button in the panel mutes (`ttsEnabled`).
+- **Spoken answers:** protocol `TextToSpeech`: ElevenLabs HTTP stream (`eleven_flash_v2_5`, `pcm_24000`) per sentence, started as soon as the first full sentence arrives, played through `PCMPlayer` (`Voice/Audio.swift`). Short version only: first sentence plus more while under 280 characters; markdown stripped. If ElevenLabs can't speak (402, no key, offline), the Mac voice (AVSpeechSynthesizer) speaks instead, with a one-time notice (0068a64). Speaker button in the panel mutes (`ttsEnabled`).
 - **Settings → Voice:** ElevenLabs key (Keychain account `elevenlabs`, read once per launch) and Voice ID.
 - Voice audio goes to ElevenLabs; screen content still only leaves through `ContextPacket.send()`.
 - **Timings:** `log stream --predicate 'subsystem == "ie.dublinhacx.glance"'` shows the warm-up time, "transcribed by … in … s" and "release → first spoken audio … s" (time until the first audio buffer is queued; the speaker adds a few ms). Use `/usr/bin/log` in zsh (`log` is a shell builtin there). Keys, transcripts and screen text are never logged.
@@ -90,7 +90,7 @@ Built so far:
 ### Phase 2 gotchas
 - Xcode is installed and its license accepted (2026-10-03); `swift build` uses it. SwiftUI macros may now compile, but the code still uses the ObservableObject pattern.
 - Recording starts on every key-down, so a quick tap shows the orange mic dot for a moment.
-- The default voice ID is the premade "Rachel"; if the account doesn't have it, TTS fails silently (log shows HTTP 4xx). Paste another voice ID in Settings.
+- The default voice is Sarah. Rachel is retired (HTTP 402 paid_plan_required). On a refusal Glance auto-picks a voice the account can use, otherwise it falls back to the Mac voice. See docs/notes/PHASE2-NOTES.md.
 - `pcm_24000` on the free tier is UNVERIFIED; if TTS gets HTTP 4xx, try `pcm_22050` (change `PCMPlayer.sampleRate` too).
 
 ## Phase 3 (cross-app memory, branch `phase3`)
