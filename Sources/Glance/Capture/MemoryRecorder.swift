@@ -1,8 +1,9 @@
 import AppKit
 import ScreenCaptureKit
 
-/// Phase 3 memory: every `Config.captureIntervalSeconds`, snapshot only the frontmost window, skip it if it is
-/// excluded or unchanged, OCR it on-device and store the text plus a small thumbnail in the Timeline.
+/// Phase 3 memory: every `Config.checkIntervalSeconds` (1 s) the frontmost window is checked against the
+/// exclusions, captured and OCR'd on-device. Every `Config.snapshotIntervalSeconds` (3 s) the most recent read is
+/// stored (text plus a small thumbnail), unless it is identical to the last stored text for that window.
 /// Exclusions are checked before capture and again before OCR, so a skipped frame is never read or stored.
 @MainActor
 final class MemoryRecorder {
@@ -14,17 +15,12 @@ final class MemoryRecorder {
 
     private var timer: Timer?
     private var busySince: Date?
-    private var lastSignature: [UInt8] = []
-    private var lastKey = ""
-    private var lastTextHash = 0
     private var ticks = 0
+    private var snapshots = SnapshotGate()
     /// Bumped by forget/pause so a frame captured before them is never stored after them.
     private var generation = 0
     /// Display asleep, screen locked or user switched out: no capture at all.
     private var suspended = false
-    /// Backoff for windows that keep changing pixels but not text (video, spinners): no OCR before this.
-    private var noOCRUntil = Date.distantPast
-    private var wastedOCRs = 0
     /// ScreenCaptureKit's window list is expensive; reused while the same window is in front at the same frame.
     private var cachedWindow: (id: CGWindowID, frame: CGRect, window: SCWindow)?
 
@@ -39,10 +35,10 @@ final class MemoryRecorder {
         guard let timeline else { state = .off("database unavailable"); return }
         ActiveApp.limitAXWaits()
         trim(timeline)
-        timer = Timer.scheduledTimer(withTimeInterval: Config.captureIntervalSeconds, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: Config.checkIntervalSeconds, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
-        timer?.tolerance = 1
+        timer?.tolerance = 0.2
         let ws = NSWorkspace.shared.notificationCenter
         for (name, value) in [(NSWorkspace.screensDidSleepNotification, true), (NSWorkspace.screensDidWakeNotification, false),
                               (NSWorkspace.sessionDidResignActiveNotification, true), (NSWorkspace.sessionDidBecomeActiveNotification, false)] {
@@ -62,7 +58,6 @@ final class MemoryRecorder {
         get { state == .paused }
         set {
             generation += 1
-            lastSignature = []
             state = newValue ? .paused : .recording
         }
     }
@@ -74,8 +69,7 @@ final class MemoryRecorder {
         generation += 1
         let before = (try? timeline.count()) ?? 0
         try? timeline.forget(since: Date().timeIntervalSince1970 - Double(Config.forgetMinutes * 60))
-        lastSignature = []
-        lastTextHash = 0
+        snapshots = SnapshotGate()
         return before - ((try? timeline.count()) ?? 0)
     }
 
@@ -92,7 +86,7 @@ final class MemoryRecorder {
     private func tick() {
         guard let timeline else { return }
         ticks += 1
-        if ticks % 20 == 0 { trim(timeline) } // rolling deletion about once a minute, paused or not
+        if ticks % 60 == 0 { trim(timeline) } // rolling deletion about once a minute, paused or not
         if let since = busySince {
             guard Date().timeIntervalSince(since) > 15 else { return }
             log.error("memory: a capture hung for 15 s; starting over")
@@ -125,17 +119,7 @@ final class MemoryRecorder {
         }
         let filter = SCContentFilter(desktopIndependentWindow: scWindow)
 
-        // A tiny capture first: most ticks end here because nothing changed.
-        let small = SCStreamConfiguration()
-        small.width = 256
-        small.height = max(1, Int(256 * scWindow.frame.height / max(1, scWindow.frame.width)))
-        small.showsCursor = false
-        let preview = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: small)
         let key = "\(window.bundleID ?? "")|\(window.title ?? "")|\(window.url ?? "")"
-        let signature = Self.signature(preview)
-        guard g == generation, !paused else { return }
-        if key == lastKey, !Self.changed(lastSignature, signature) { report(.recording, generation: g); return }
-        if key == lastKey, Date() < noOCRUntil { report(.recording, generation: g); return }
 
         // 1× points, longest side capped: enough for OCR and a fraction of the Retina pixels.
         let full = SCStreamConfiguration()
@@ -151,29 +135,23 @@ final class MemoryRecorder {
         if let reason = Exclusions.memorySkipReason(nowWindow) { state = .skipping(reason); return }
         guard nowApp?.processIdentifier == app.processIdentifier, nowWindow.title == window.title,
               nowWindow.url == window.url, let nowAX, CFEqual(nowAX, axWindow) else { return }
-        if key != lastKey { wastedOCRs = 0; noOCRUntil = .distantPast }
-        lastKey = key
-        lastSignature = signature
 
         let appName = app.localizedName ?? window.bundleID ?? "App"
-        let read = try await Task.detached(priority: .utility) { () -> (text: String, thumb: Data?, ocr: Double) in
+        let read = try await Task.detached(priority: .utility) { () -> (text: String, ocr: Double) in
             let t = Date()
             let text = try OCR.lines(in: frame, languageCorrection: false).map(\.text).joined(separator: "\n")
-            return (text, text.isEmpty ? nil : Self.thumbnail(frame), Date().timeIntervalSince(t))
+            return (text, Date().timeIntervalSince(t))
         }.value
         // Paused or forgotten while OCR ran: store nothing, and leave the indicator alone.
         guard g == generation, !paused else { return }
         state = .recording
-        guard !read.text.isEmpty, read.text.hashValue != lastTextHash else {
-            wastedOCRs += 1 // pixels changed, text didn't: back off up to 30 s for this window
-            noOCRUntil = Date().addingTimeInterval(min(30, Config.captureIntervalSeconds * pow(2, Double(wastedOCRs))))
-            return
-        }
-        wastedOCRs = 0
-        lastTextHash = read.text.hashValue
+        // Every check reads; only one read per snapshot interval is stored, and never a duplicate of the last row.
+        guard snapshots.admit(key: key, text: read.text, now: Date()) else { return }
+        let thumb = await Task.detached(priority: .utility) { Self.thumbnail(frame) }.value
+        guard g == generation, !paused else { return }
         try timeline.insert(app: appName, bundleID: window.bundleID, title: window.title, url: window.url,
-                            text: read.text, thumb: read.thumb)
-        log.notice("memory: stored a frame (OCR \(read.ocr, format: .fixed(precision: 2), privacy: .public) s, total \(Date().timeIntervalSince(started), format: .fixed(precision: 2), privacy: .public) s)")
+                            text: read.text, thumb: thumb)
+        log.notice("memory: stored a snapshot (OCR \(read.ocr, format: .fixed(precision: 2), privacy: .public) s, check \(Date().timeIntervalSince(started), format: .fixed(precision: 2), privacy: .public) s)")
     }
 
     /// The ScreenCaptureKit window that is the AX focused window: same app, same frame. If more than one matches,
@@ -203,27 +181,22 @@ final class MemoryRecorder {
         }?[kCGWindowNumber as String] as? CGWindowID
     }
 
-    // MARK: Cheap change detection and thumbnails (selftested)
+    /// Decides which reads become rows: at most one per `Config.snapshotIntervalSeconds`, and none whose text is
+    /// identical to the last row stored for the same window (saves storage). Selftested.
+    struct SnapshotGate {
+        private var lastAt = Date.distantPast
+        private var lastText: [String: Int] = [:]
 
-    /// 128×72 grey copy of the frame.
-    nonisolated static func signature(_ image: CGImage) -> [UInt8] {
-        var px = [UInt8](repeating: 0, count: 128 * 72)
-        px.withUnsafeMutableBytes { p in
-            guard let c = CGContext(data: p.baseAddress, width: 128, height: 72, bitsPerComponent: 8, bytesPerRow: 128,
-                                    space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue)
-            else { return }
-            c.interpolationQuality = .medium
-            c.draw(image, in: CGRect(x: 0, y: 0, width: 128, height: 72))
+        mutating func admit(key: String, text: String, now: Date) -> Bool {
+            guard !text.isEmpty, now.timeIntervalSince(lastAt) >= Config.snapshotIntervalSeconds - 0.25 else { return false }
+            lastAt = now // this snapshot slot is used even when the text is a duplicate
+            guard lastText[key] != text.hashValue else { return false }
+            lastText[key] = text.hashValue
+            return true
         }
-        return px
     }
 
-    nonisolated static func changed(_ a: [UInt8], _ b: [UInt8]) -> Bool {
-        guard a.count == b.count, !a.isEmpty else { return true }
-        var cells = 0
-        for i in 0..<a.count where abs(Int(a[i]) - Int(b[i])) > 6 { cells += 1 }
-        return Double(cells) / Double(a.count) > Config.frameChangeFraction
-    }
+    // MARK: Thumbnails (selftested)
 
     /// Small JPEG, longest side `Config.thumbnailMaxDimension`.
     nonisolated static func thumbnail(_ image: CGImage) -> Data? {

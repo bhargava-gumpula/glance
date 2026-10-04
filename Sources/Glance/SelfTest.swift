@@ -17,7 +17,8 @@ enum SelfTest {
         check(warm.text.contains("Glance"), "OCR warm-up actually runs recognition")
         check(OCR.warmUp().seconds < 3, "OCR is fast once warmed up")
 
-        check(Config.captureIntervalSeconds > 0, "capture interval is positive")
+        check(Config.checkIntervalSeconds == 1 && Config.snapshotIntervalSeconds == 3 && Config.retentionMinutes == 10
+              && Config.forgetMinutes == Config.retentionMinutes, "memory timing: check 1 s, snapshot 3 s, keep and forget 10 min")
         check(Config.retentionMinutes > 0, "retention is positive")
         check(Config.excludedApps.contains("com.apple.keychainaccess"), "Keychain Access is excluded by default")
         check(["claude", "deepseek", "openai", "local"].contains(Config.provider), "default provider is known")
@@ -379,17 +380,17 @@ enum SelfTest {
         check(skip("com.apple.Safari", url: "https://www.asus.com/ie/laptops/for-home/zenbook/") == nil,
               "URL blocklist: no false hit on a laptop page")
 
-        // Phase 3: change detection and thumbnails
+        // Phase 3: snapshots (one row per 3 s from the latest read, no duplicate text per window) and thumbnails
         let pageA = page(["MacBook Air", "16 GB unified memory", "18-hour battery"], width: 1440, height: 900)
-        let pageB = page(["ThinkPad X1 Carbon", "32 GB memory", "Intel Core Ultra 7", "€1,899"], width: 1440, height: 900)
-        let sigA = MemoryRecorder.signature(pageA)
-        check(!MemoryRecorder.changed(sigA, MemoryRecorder.signature(pageA)), "change detection: same frame is skipped")
-        check(MemoryRecorder.changed(sigA, MemoryRecorder.signature(pageB)), "change detection: different page is stored")
-        let scrolled = page(["16 GB unified memory", "18-hour battery", "512 GB SSD"], width: 1440, height: 900)
-        check(MemoryRecorder.changed(sigA, MemoryRecorder.signature(scrolled)), "change detection: scrolled text is stored")
-        let caret = page(["MacBook Air", "16 GB unified memory", "18-hour battery|"], width: 1440, height: 900)
-        check(!MemoryRecorder.changed(sigA, MemoryRecorder.signature(caret)), "change detection: a caret blink is skipped")
-        check(MemoryRecorder.changed([], sigA), "change detection: first frame is stored")
+        var gate = MemoryRecorder.SnapshotGate()
+        let t = Date()
+        check(gate.admit(key: "safari|A", text: "page A", now: t), "snapshot: first read is stored")
+        check(!gate.admit(key: "safari|A", text: "page A scrolled", now: t.addingTimeInterval(1))
+              && !gate.admit(key: "safari|A", text: "page A scrolled", now: t.addingTimeInterval(2)), "snapshot: reads within 3 s are not stored")
+        check(gate.admit(key: "safari|A", text: "page A scrolled", now: t.addingTimeInterval(3)), "snapshot: the latest read is stored after 3 s")
+        check(!gate.admit(key: "safari|A", text: "page A scrolled", now: t.addingTimeInterval(6)), "snapshot: identical text for the same window is not stored again")
+        check(gate.admit(key: "notes|B", text: "page A scrolled", now: t.addingTimeInterval(9)), "snapshot: same text in another window is stored")
+        check(!gate.admit(key: "notes|C", text: "", now: t.addingTimeInterval(12)), "snapshot: empty text is never stored")
         let thumbData = MemoryRecorder.thumbnail(pageA) ?? Data()
         let thumbImg = NSBitmapImageRep(data: thumbData)
         check(thumbImg?.pixelsWide == Config.thumbnailMaxDimension && thumbData.count < 40_000,
@@ -420,18 +421,17 @@ enum SelfTest {
         check(ContextPacket(appName: "Safari", redacted: content, raw: content, redactions: 0).memory.isEmpty,
               "memory: nothing from the timeline unless a question adds it")
 
-        // Phase 3: cost of one stored frame (signature + OCR + thumbnail), for the CPU estimate
+        // Phase 3: cost of one check (OCR, every 1 s) and one snapshot (thumbnail, every 3 s), for the CPU estimate
         let bench = page((1...40).map { "Line \($0): 16 GB unified memory, 512 GB SSD, 18-hour battery, Wi-Fi 6E, €1,299" },
                          width: 1440, height: 900)
-        let t0 = Date()
-        _ = MemoryRecorder.signature(bench)
         let t1 = Date()
         let benchLines = (try? OCR.lines(in: bench)) ?? []
         let t2 = Date()
         _ = MemoryRecorder.thumbnail(bench)
         let t3 = Date()
-        print(String(format: "      frame cost: signature %.1f ms, OCR %.0f ms (%d lines), thumbnail %.1f ms",
-                     t1.timeIntervalSince(t0) * 1000, t2.timeIntervalSince(t1) * 1000, benchLines.count, t3.timeIntervalSince(t2) * 1000))
+        let ocrMS = t2.timeIntervalSince(t1) * 1000, thumbMS = t3.timeIntervalSince(t2) * 1000
+        print(String(format: "      check cost: OCR %.0f ms (%d lines), thumbnail %.1f ms → about %.0f%% of one core while the window has text",
+                     ocrMS, benchLines.count, thumbMS, (ocrMS + thumbMS / 3) / 10 / Config.checkIntervalSeconds))
         check(benchLines.count >= 30, "OCR reads a 1× (1440×900) frame")
 
         // Phase 2 hardening: ElevenLabs errors and voice choice
