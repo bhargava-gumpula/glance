@@ -274,14 +274,15 @@ enum SelfTest {
               "spoken: Say line is spoken, the rest is shown")
         check(Voice.speakable("**16 GB** is `enough`") == "16 GB is enough", "speakable: markdown dropped")
 
-        PipSprite.selfTest(check)
-        PetGeometry.selfTest(check)
-        PetBubbleView.selfTest(check)
-        PetView.selfTest(check)
+        // Phase 8
         Problem.selfTest(check)
         AnswerBlock.selfTest(check)
         AppIcon.selfTest(check)
         MenuBarGlyph.selfTest(check)
+        PipSprite.selfTest(check)
+        PetGeometry.selfTest(check)
+        PetBubbleView.selfTest(check)
+        PetView.selfTest(check)
         // Phase 3: timeline (temp database)
         let dbPath = NSTemporaryDirectory() + "glance-selftest-\(getpid()).sqlite"
         defer { for ext in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: dbPath + ext) } }
