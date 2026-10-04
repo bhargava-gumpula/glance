@@ -113,12 +113,13 @@ enum GuideTests {
 
         // 7. Consent: Cancel sends nothing; Send sends the redacted packet. GuideSend runs on the main actor,
         // so the main run loop is spun instead of blocking it.
-        func sendOnce(consent: Bool, question: String) -> GuideRecordingProvider {
+        func sendOnce(consent: Bool, question: String, autoSend: Bool = false, asked: AskCount = AskCount(),
+                      packet: ContextPacket? = nil) -> GuideRecordingProvider {
             let recorder = GuideRecordingProvider()
             let box = ResultFlag()
             MainActor.assumeIsolated {
-                GuideConsent.ask = { _ in consent }
-                let stream = GuideSend.send(g, question: question, provider: recorder, needsConsent: true,
+                GuideConsent.ask = { _ in asked.n += 1; return consent }
+                let stream = GuideSend.send(packet ?? g, question: question, provider: recorder, needsConsent: true, autoSend: autoSend,
                                             preview: { _, _ in }, consented: { _ in })
                 Task { _ = try? await stream.reduce("", +); box.done = true }
             }
@@ -130,6 +131,17 @@ enum GuideTests {
         let sentText = sendOnce(consent: true, question: "Mail a@b.ie").lastText
         check(sentText.hasPrefix("GOAL: Mail [EMAIL]") && sentText.contains("[EMAIL]") && !sentText.contains("a@b.ie"),
               "guide: consent Send → redacted packet and goal sent")
+        // Owner default: Guide auto-sends. No card even with a high-risk item; still redacted.
+        check(Config.guideAutoSend, "guide: auto-send is the default")
+        let asked = AskCount()
+        var risky = g
+        risky.guideBlock = (g.guideBlock ?? "") + "\nO9 \"Card [CARD]\""
+        let auto = sendOnce(consent: false, question: "Mail a@b.ie", autoSend: true, asked: asked, packet: risky)
+        check(asked.n == 0 && auto.called && auto.lastText.contains("[EMAIL]") && !auto.lastText.contains("a@b.ie"),
+              "guide: auto-send sends redacted without asking, even with [CARD]")
+        let askedOff = AskCount()
+        check(!sendOnce(consent: false, question: "Show me how", autoSend: false, asked: askedOff).called && askedOff.n == 1,
+              "guide: auto-send off → consent asked, Cancel sends nothing")
 
         // send() clamp: a screen packet is never sent unredacted, even when reveal is asked for.
         var screenPacket = ContextPacket(appName: "Pages", redacted: .init(selectionImage: Data([0xFF]), selectedText: "Card [CARD]"),
@@ -212,6 +224,7 @@ enum GuideTests {
 }
 
 private final class ResultFlag: @unchecked Sendable { var done = false }
+final class AskCount: @unchecked Sendable { var n = 0 }
 
 /// Records what would be sent, without any network.
 private final class GuideRecordingProvider: AIProvider, @unchecked Sendable {
