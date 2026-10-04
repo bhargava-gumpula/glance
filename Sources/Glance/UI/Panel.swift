@@ -28,9 +28,8 @@ final class PanelController {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.hidesOnDeactivate = false
         panel.contentView = NSHostingView(rootView: PanelView(chat: chat))
-        pet = PetController(chat: chat)
+        pet = PetController(chat: chat) // Phase 8: hidden until ⌥Space (appear())
         chat.onSay = { [weak self] in self?.pet.say($0) } // Phase 4: Pip shows the fixed "I hid N" line
-        pet.show()
 
         chat.onPoint = { [weak self] in self?.pointTool.start() }
         pointTool.onSelect = { [weak self] rect, screen in
@@ -42,6 +41,8 @@ final class PanelController {
         pointTool.onCancel = { [weak self] in self?.focusInput() }
         pet.onTap = { [weak self] in self?.petTapped() }
         GuideHighlight.pet = pet
+        // Integration: Pip stays on screen during a Guide session or while a Send/Cancel question is pending.
+        pet.keepVisible = { [weak chat = self.chat] in (chat?.guide.active ?? false) || SendConfirm.shared.prompt != nil }
         GuideHighlight.avoid = { [weak self] in self?.avoid($0) }
         Guide.startTracking()
     }
@@ -63,11 +64,15 @@ final class PanelController {
         panel.orderOut(nil)
         pointTool.clear()
         pet.goHome()
+        pet.disappear()
     }
 
     var isVisible: Bool { panel.isVisible }
 
     func showStatus(_ text: String) { chat.status = text }
+
+    /// Phase 8: shows memory paused / not saving / off as a chip in the panel.
+    func showMemory(_ state: MemoryRecorder.State) { chat.memoryState = state }
 
     /// Key-event times (seconds since boot, from the events themselves), so a slow mic start can't turn a tap into a hold.
     private var pressedAt: TimeInterval?
@@ -154,6 +159,8 @@ final class ChatModel: ObservableObject {
     @Published var input = ""
     @Published var busy = false
     @Published var status = "Drag a box over anything, then ask about it."
+    /// Display only (Phase 8 memory chip).
+    @Published var memoryState: MemoryRecorder.State = .recording
     /// Hold-to-talk: true while ⌥Space is held, `transcribing` until the text is back.
     @Published var listening = false {
         didSet {
@@ -412,6 +419,7 @@ struct PanelView: View {
     @ObservedObject var chat: ChatModel
     @ObservedObject var confirm = SendConfirm.shared
     @AppStorage("localOnly") private var localOnly = false
+    @State private var atBottom = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -431,31 +439,51 @@ struct PanelView: View {
                     .font(.callout.bold()).foregroundStyle(.red)
             } else if chat.transcribing {
                 Label("Transcribing…", systemImage: "waveform").font(.callout).foregroundStyle(.secondary)
+            } else if let problem = Problem.fromStatus(chat.status) {
+                ProblemCard(problem: problem, compact: true)
             } else {
-                Text(chat.status).font(.caption).foregroundStyle(.secondary)
+                Text(chat.status).font(.callout).foregroundStyle(.secondary)
+            }
+            if let memory = Problem.memory(chat.memoryState) {
+                ProblemCard(problem: memory, compact: true)
             }
 
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 10) {
+                    LazyVStack(alignment: .leading, spacing: 14) {
                         ForEach(chat.turns) { TurnView(turn: $0) }
                         if !chat.busy, chat.turns.last?.kind == .assistant {
-                            HStack {
+                            HStack(spacing: 8) {
                                 ForEach(chat.mode.followUps, id: \.label) { f in
                                     Button(f.label) { chat.followUp(f) }
+                                        .buttonStyle(.bordered).buttonBorderShape(.capsule).controlSize(.small)
                                 }
                             }
                         }
                         Color.clear.frame(height: 1).id("bottom")
+                            .onAppear { atBottom = true }
+                            .onDisappear { atBottom = false }
                     }
+                    .padding(.vertical, 4)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .onChange(of: chat.turns.last?.text) { proxy.scrollTo("bottom") }
-                .onChange(of: chat.turns.count) { proxy.scrollTo("bottom") }
+                // Follow the stream only while the user is at the bottom; reading earlier text isn't yanked away.
+                .onChange(of: chat.turns.last?.text) { if atBottom { proxy.scrollTo("bottom") } }
+                .onChange(of: chat.turns.count) { if atBottom || chat.turns.last?.kind == .user { proxy.scrollTo("bottom") } }
+                .overlay(alignment: .bottomTrailing) {
+                    if !atBottom, !chat.turns.isEmpty {
+                        Button { withAnimation { proxy.scrollTo("bottom") } } label: {
+                            Label("Latest", systemImage: "arrow.down").font(.caption.weight(.semibold))
+                        }
+                        .buttonStyle(.borderedProminent).buttonBorderShape(.capsule).controlSize(.small)
+                        .padding(8)
+                        .help("Scroll to the latest message")
+                    }
+                }
             }
 
             if let prompt = confirm.prompt {
-                HStack {
+                HStack(spacing: 8) {
                     Label(prompt, systemImage: "lock.shield").font(.callout.bold())
                     Spacer()
                     Button("Cancel") { confirm.answer(false) }.keyboardShortcut(.cancelAction).buttonStyle(.bordered)
@@ -466,14 +494,19 @@ struct PanelView: View {
                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.blue.opacity(0.25)))
                 .help("Say \u{201C}send\u{201D} or \u{201C}cancel\u{201D} with \(Config.hotkeyDescription) too")
             }
-            HStack {
+            HStack(spacing: 8) {
                 TextField("Ask about it…", text: $chat.input)
                     .textFieldStyle(.roundedBorder)
+                    .controlSize(.large)
                     .onSubmit { chat.submit() }
                 if chat.busy {
-                    Button("Stop") { chat.stop() }
+                    Button { chat.stop() } label: { Label("Stop", systemImage: "stop.fill") }
+                        .buttonStyle(.borderedProminent).tint(.red).controlSize(.large)
+                        .help("Stop the answer and the voice")
                 } else {
-                    Button("Ask") { chat.submit() }.disabled(chat.input.isEmpty)
+                    Button { chat.submit() } label: { Label("Ask", systemImage: "arrow.up") }
+                        .buttonStyle(.borderedProminent).controlSize(.large)
+                        .disabled(chat.input.isEmpty)
                 }
             }
         }
@@ -492,11 +525,12 @@ private struct TurnView: View {
             HStack {
                 Spacer(minLength: 40)
                 Text(turn.text)
-                    .padding(8)
-                    .background(Color.accentColor.opacity(0.18), in: RoundedRectangle(cornerRadius: 10))
+                    .padding(.horizontal, 10).padding(.vertical, 7)
+                    .background(Color.accentColor.opacity(0.18), in: RoundedRectangle(cornerRadius: 12))
+                    .textSelection(.enabled)
             }
         case .assistant:
-            Text(markdown(turn.text.isEmpty ? "…" : turn.text)).textSelection(.enabled)
+            AnswerView(text: turn.text)
         case .preview:
             VStack(alignment: .leading, spacing: 8) {
                 // Phase 4: big enough to see the blacked-out lines; click to enlarge.
@@ -512,13 +546,8 @@ private struct TurnView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
         case .notice:
-            Label(turn.text, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange)
+            ProblemCard(problem: Problem.classify(turn.text))
         }
-    }
-
-    private func markdown(_ s: String) -> AttributedString {
-        (try? AttributedString(markdown: s, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
-            ?? AttributedString(s)
     }
 }
 

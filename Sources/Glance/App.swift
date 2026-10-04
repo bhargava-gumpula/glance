@@ -16,6 +16,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     static func main() {
         if CommandLine.arguments.contains("--selftest") { SelfTest.run() }
+        if let i = CommandLine.arguments.firstIndex(of: "--make-iconset"), i + 1 < CommandLine.arguments.count {
+            exit(AppIcon.writeIconset(to: URL(fileURLWithPath: CommandLine.arguments[i + 1])) == AppIcon.sizes.count ? 0 : 1)
+        }
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
@@ -47,7 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             MainActor.assumeIsolated { self?.showLocalOnly() }
         }
 
-        // Capture indicator: eye = recording, eye.slash = paused or off, eye with a dot = skipping this window.
+        // Capture indicator: the menu-bar penguin's badge shows recording, paused/off or skipping this window.
         memory.onChange = { [weak self] in self?.showMemoryState($0) }
         showMemoryState(memory.state)
         panel.timeline = memory.timeline
@@ -66,7 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        if !Permission.allGranted { onboarding.show() }
+        if !Permission.allGranted || !OnboardingController.seen { onboarding.show() }
     }
 
     @objc private func togglePanel() { panel.toggle() }
@@ -85,13 +88,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showMemoryState(_ state: MemoryRecorder.State) {
-        let (symbol, text): (String, String) = switch state {
-        case .recording: ("eye", "Memory: on (last \(Config.retentionMinutes) min, on this Mac)")
-        case .paused: ("eye.slash", "Memory: paused")
-        case .skipping(let why): ("eye.trianglebadge.exclamationmark", "Memory: not saving (\(why))")
-        case .off(let why): ("eye.slash", "Memory: off (\(why))")
+        let text = switch state {
+        case .recording: "Memory: on (last \(Config.retentionMinutes) min, on this Mac)"
+        case .paused: "Memory: paused"
+        case .skipping(let why): "Memory: not saving (\(why))"
+        case .off(let why): "Memory: off (\(why))"
         }
-        statusItem.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Glance: \(text)")
+        // Phase 8: a template penguin with a state badge (paused bars, "!" for not saving, a slash for off).
+        statusItem.button?.image = MenuBarGlyph.image(for: state, description: "Glance: \(text)")
+        panel.showMemory(state)
         memoryStatus.title = text
         pauseItem.title = state == .paused ? "Resume Memory" : "Pause Memory"
         pauseItem.isHidden = { if case .off = state { true } else { false } }()

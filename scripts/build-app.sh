@@ -11,6 +11,12 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/debug/Glance "$APP/Contents/MacOS/Glance"
 
+# 8-bit penguin icon, rendered from Pip's pixel grid.
+ICONSET=build/AppIcon.iconset
+rm -rf "$ICONSET"
+.build/debug/Glance --make-iconset "$ICONSET"
+iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
+
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -18,6 +24,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleIdentifier</key><string>ie.dublinhacx.glance</string>
   <key>CFBundleName</key><string>Glance</string>
   <key>CFBundleExecutable</key><string>Glance</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.1</string>
   <key>CFBundleVersion</key><string>1</string>

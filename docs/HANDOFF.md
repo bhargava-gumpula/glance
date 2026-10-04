@@ -154,6 +154,22 @@ Built so far:
 - [ ] Same again → **Send** → the voice says the line first, then answers
 - [ ] A selection with only an email → "I hid 1 sensitive item before sending." is spoken, with no tap
 - [ ] Menu → Local Only → badge on panel and Pip; ask a question → answer from Apple's on-device model (no Ollama); `nettop -p $(pgrep -x Glance)` shows no outbound traffic
+## Phase 8 (visual polish, branch `phase8`)
+- **Onboarding** (`UI/Onboarding.swift`): Pip-led, 3 steps: hello (point/talk/menu bar), the 3 permissions with a one-line why and live ✓, "what stays on your Mac". Shown on first run (`onboardingSeen` in UserDefaults) or while a permission is missing; "Permissions…" reopens it on the permissions step.
+- **Error states** (`UI/Problem.swift`): `Problem.classify` turns the existing notice strings into designed cards (title, hint, fix button, "Details" with the raw text): no key, key for another address, offline, Azure deployment not ready, 401/403, 404, 429, 5xx, permission missing, Mac voice (info), ElevenLabs hiccup, OCR unavailable (Relaunch button). Memory paused / not saving (with the reason) / off shows as a chip under the status. Pip's bubble shows the friendly line; info notices (Mac voice) stay out of the bubble. ChatModel logic unchanged (one display-only `memoryState`).
+- **Icon:** `AppIcon` renders an 8-bit penguin from Pip's own grid; `Glance --make-iconset <dir>` writes the PNGs and `build-app.sh` runs `iconutil` into `Contents/Resources/AppIcon.icns` (`CFBundleIconFile`). The menu-bar glyph is a 16×16 template penguin with a badge: none = recording, bars = paused, "!" = not saving, slash = off.
+- **Panel:** answers render headings, fenced code (monospaced, horizontal scroll, Copy) and pipe tables (`UI/AnswerView.swift`); bullets; red Stop button; "Latest" scroll-to-bottom button; streaming only auto-scrolls while you're at the bottom; capsule follow-ups.
+- **Pip visibility (owner request):** no idle corner Pip. `PetController.shouldShow` = Glance shown (`appear()`) or listening or speaking or `keepVisible()` (Phase 5 sets it to `chat.guide.active`). Hiding Glance calls `goHome()` then `disappear()`; `goHome()` now also calls `updateVisibility()`, so Pip leaves the screen when nothing keeps it. `show()`, `point()` and `say()` put Pip on screen. Reduce motion: appears at the corner, disappears in place.
+- Not done here (owned by Phase 4): Settings regroup, the Local-only badge, the Send/Cancel confirm card, the bigger preview.
+
+### Phase 8 check (owner, needs `./scripts/build-app.sh` from `glance-phase8`)
+- [ ] `./scripts/selftest.sh` passes (all new checks pass; see the OCR note below)
+- [ ] Onboarding: `defaults delete ie.dublinhacx.glance onboardingSeen`, relaunch → Pip's 3-step welcome
+- [ ] Icon: `build/Glance.app` shows the penguin in Finder; the menu bar shows the penguin glyph; Pause Memory → bars badge
+- [ ] Error states: remove the key (or Wi-Fi off) and ask → designed card with "Open Settings" / "Details"
+- [ ] Pip: not on screen at launch; tap ⌥Space → centre → corner; hold → listening Pip; hide → gone; a spoken answer keeps Pip until it ends
+- [ ] Panel: ask for a table or code ("show the specs as a table") → table and code block; scroll up mid-answer → "Latest" button
+- OCR selftest note: the two OCR checks fail with `CRImageReaderError 1` while other worktrees run their selftests at the same time (main's binary failed the same way then). Run it alone.
 
 ## Tested build (owner-confirmed, 2026-10-03 18:15)
 `main` = the combined build: Phase 2 voice, Phase 3 memory (memory on every question, the activity log, full recent context), Pip, and audit fixes A1–A19. 253 selftests pass. The owner confirmed "this version works well". Claude via Azure is pending the deployment's provisioningState = Succeeded.

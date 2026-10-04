@@ -32,6 +32,10 @@ final class PetModel: ObservableObject {
 @MainActor
 final class PetController {
     var onTap: (() -> Void)?
+    /// Keeps Pip on screen while Glance is hidden (Phase 5 sets it to "a Guide session is active").
+    var keepVisible: () -> Bool = { false }
+    /// True between `appear()` (Glance shown) and `disappear()` (Glance hidden).
+    private var glanceShown = false
     private let chat: ChatModel
     private let model = PetModel()
     private let window: NSPanel
@@ -65,21 +69,49 @@ final class PetController {
             chat.$answerRaw.sink { [weak self] in self?.spokenChanged($0) },
             chat.$listening.sink { [weak self] in if $0 { self?.stopTalking() } }, // barge-in stops speech
             chat.$muted.sink { [weak self] in if $0 { self?.stopTalking() } },
+            // Phase 8: Pip is only on screen while Glance is shown, listening, speaking or guiding.
+            model.$talkUntil.sink { [weak self] _ in DispatchQueue.main.async { self?.updateVisibility() } },
+            chat.$listening.sink { [weak self] _ in DispatchQueue.main.async { self?.updateVisibility() } },
             NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
                 .sink { [weak self] _ in self?.screensChanged() },
         ]
     }
 
+    /// Puts Pip on screen at home now (Guide calls this at the start of a session). Pip goes away again at the
+    /// next `goHome()`/`updateVisibility()` unless Glance is shown, speaking, listening or `keepVisible()`.
     func show() {
         if home == nil { resetHome() }
         if let home { apply(home, animated: false) }
         window.orderFrontRegardless()
     }
 
+    /// Glance was hidden: Pip leaves the screen unless it is still speaking, listening or guiding.
+    func disappear() {
+        glanceShown = false
+        updateVisibility()
+    }
+
+    /// Owner request: no idle corner Pip. Shown only while one of these holds.
+    nonisolated static func shouldShow(glanceShown: Bool, listening: Bool, speaking: Bool, guiding: Bool) -> Bool {
+        glanceShown || listening || speaking || guiding
+    }
+
+    func updateVisibility() {
+        let speaking = model.talkUntil.map { $0 > Date() } ?? false
+        if Self.shouldShow(glanceShown: glanceShown, listening: chat.listening, speaking: speaking, guiding: keepVisible()) {
+            if !window.isVisible { window.orderFrontRegardless() }
+        } else if window.isVisible {
+            flight?.cancel()
+            ring.hide()
+            window.orderOut(nil)
+        }
+    }
+
     /// Fly next to `rect` (Cocoa screen coordinates, origin bottom-left) and point at it.
     /// `ring` draws Pip's own dashed box around it; the PointTool selection already has one.
     func point(at rect: CGRect, ring showRing: Bool = true) {
         model.pointing = true
+        window.orderFrontRegardless()
         apply(PetGeometry.placement(for: rect, screens: NSScreen.screens.map(\.visibleFrame),
                                     window: Self.size, sprite: Self.sprite, gap: 8), animated: true)
         if showRing { ring.show(around: rect) } else { ring.hide() }
@@ -99,15 +131,18 @@ final class PetController {
     func say(_ text: String) {
         model.said = (text, PetView.lastReply(in: chat.turns)?.id)
         model.dismissed = nil
+        window.orderFrontRegardless()
     }
 
     /// Stop pointing, close the bubble and go back to the corner (used when Glance is hidden).
+    /// Phase 8: if Glance is hidden and nothing keeps Pip (speaking, listening, `keepVisible`), Pip also leaves the screen.
     func goHome() {
         model.pointing = false
         model.said = nil
         model.dismissed = PetView.lastReply(in: chat.turns)?.id
         ring.hide()
         if let home { apply(home, animated: true) }
+        updateVisibility()
     }
 
     /// Glance was shown: pop up in the centre of the active screen, then fly to its top-right corner.
@@ -115,6 +150,7 @@ final class PetController {
     func appear() {
         let mouse = NSEvent.mouseLocation
         guard let vf = (NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main)?.visibleFrame else { return }
+        glanceShown = true
         model.pointing = false
         ring.hide()
         let target = PetGeometry.home(in: vf, window: Self.size, sprite: Self.sprite)
@@ -214,7 +250,8 @@ struct PetView: View {
     @AppStorage("localOnly") private var localOnly = false
 
     nonisolated static func lastReply(in turns: [ChatModel.Turn]) -> ChatModel.Turn? {
-        turns.last { $0.kind == .assistant || $0.kind == .notice }
+        // Phase 8: info notices ("Using Mac voice") stay in the panel, so they don't replace the answer in the bubble.
+        turns.last { $0.kind == .assistant || ($0.kind == .notice && Problem.classify($0.text).severity != .info) }
     }
 
     /// The part of a raw answer that is read aloud: its "Say:" line, or the answer itself without one.
@@ -267,7 +304,7 @@ struct PetView: View {
                            alignment: Alignment(horizontal: tailRight ? .trailing : .leading, vertical: l.bubbleBelow ? .top : .bottom))
                     .offset(x: bubbleX, y: l.bubbleBelow ? spriteTop + s.height + 6 : 0)
             } else if let bubble = Self.bubbleText(state: state, transcribing: chat.transcribing, said: model.said,
-                                            reply: reply.map { ($0.id, $0.text) }, spoken: spoken, dismissed: model.dismissed) {
+                                            reply: reply.map { ($0.id, $0.kind == .notice ? Problem.classify($0.text).bubble : $0.text) }, spoken: spoken, dismissed: model.dismissed) {
                 PetBubbleView(text: bubble, tailOnRight: tailRight) { model.dismissed = reply?.id; model.said = nil }
                     .frame(width: 260, height: max(0, l.bubbleBelow ? w.height - spriteTop - s.height - 6 : spriteTop - 6),
                            alignment: Alignment(horizontal: tailRight ? .trailing : .leading, vertical: l.bubbleBelow ? .top : .bottom))
@@ -306,6 +343,14 @@ struct PetView: View {
               "pet A14: still talking after streaming ends")
         check(spokenLine("Say: It's plenty.\nThe full answer…") == "It's plenty." && spokenLine("Plain answer here, long enough to tell.") != ""
               && spokenLine("Sa") == "", "pet A14: spoken line is the Say line, the plain answer, or nothing yet")
+        check(!PetController.shouldShow(glanceShown: false, listening: false, speaking: false, guiding: false),
+              "pet visibility: hidden at launch and after hiding Glance")
+        check(PetController.shouldShow(glanceShown: true, listening: false, speaking: false, guiding: false)
+              && PetController.shouldShow(glanceShown: false, listening: true, speaking: false, guiding: false),
+              "pet visibility: shown with Glance (tap) and while listening (hold)")
+        check(PetController.shouldShow(glanceShown: false, listening: false, speaking: true, guiding: false)
+              && PetController.shouldShow(glanceShown: false, listening: false, speaking: false, guiding: true),
+              "pet visibility: stays while speaking or guiding with the panel closed")
         check(PetController.speechSeconds("x") < PetController.speechSeconds(String(repeating: "x", count: 140))
               && PetController.speechSeconds(String(repeating: "x", count: 2000)) == PetController.speechSeconds(String(repeating: "x", count: 280)),
               "pet A14: speech estimate grows with length, capped at 280 characters")

@@ -274,6 +274,11 @@ enum SelfTest {
               "spoken: Say line is spoken, the rest is shown")
         check(Voice.speakable("**16 GB** is `enough`") == "16 GB is enough", "speakable: markdown dropped")
 
+        // Phase 8
+        Problem.selfTest(check)
+        AnswerBlock.selfTest(check)
+        AppIcon.selfTest(check)
+        MenuBarGlyph.selfTest(check)
         PipSprite.selfTest(check)
         PetGeometry.selfTest(check)
         PetBubbleView.selfTest(check)
