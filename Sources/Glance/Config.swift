@@ -10,8 +10,11 @@ enum Config {
     static let hotkeyKeyCode: UInt32 = 49
     static let hotkeyDescription = "⌥Space"
 
-    static var captureIntervalSeconds: Double { value("captureIntervalSeconds", default: 3) }
-    static var retentionMinutes: Int { value("retentionMinutes", default: 15) }
+    /// Memory: the focused window is checked, captured and OCR'd this often (exclusions run first every time).
+    static var checkIntervalSeconds: Double { value("checkIntervalSeconds", default: 1) }
+    /// Memory: the most recent read is stored as a row this often (identical text for the same window is skipped).
+    static var snapshotIntervalSeconds: Double { value("snapshotIntervalSeconds", default: 3) }
+    static var retentionMinutes: Int { value("retentionMinutes", default: 10) }
     static var provider: String { value("provider", default: "claude") }
     static var ttsEnabled: Bool { value("ttsEnabled", default: true) }
 
@@ -44,15 +47,12 @@ enum Config {
 
     // MARK: Memory (Phase 3)
 
-    /// "Forget" in the menu deletes this many minutes back.
-    static let forgetMinutes = 15
+    /// "Forget" in the menu deletes this many minutes back: the whole retention window.
+    static var forgetMinutes: Int { retentionMinutes }
     /// Longest side of the frame the recorder OCRs, in points (5K windows would otherwise cost seconds of OCR).
     static let memoryMaxCaptureDimension = 1920.0
     /// Longest side of the stored thumbnail. Full frames are never stored.
     static let thumbnailMaxDimension = 320
-    /// A frame counts as changed when more than this share of cells in a 128×72 grey copy changed by more than
-    /// 6 grey levels. A blinking caret touches 1–2 cells (0.02 %); scrolling or a new page touches hundreds.
-    static let frameChangeFraction = 0.003
     /// At most this many earlier windows, and characters per window, go into a question.
     static let memorySnippetLimit = 6
     static let memorySnippetChars = 700
