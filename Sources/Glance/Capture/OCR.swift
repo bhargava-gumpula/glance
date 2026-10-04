@@ -8,19 +8,38 @@ enum OCR {
         let text: String
         /// In image pixels, top-left origin.
         let box: CGRect
+        /// Word boxes (same units), only when asked for with `words: true`. Guide points at a word inside a longer line.
+        var words: [Word] = []
+    }
+
+    struct Word: Sendable {
+        let text: String
+        let box: CGRect
     }
 
     /// `languageCorrection: false` is faster; the memory recorder uses it (search text, not quotes).
-    static func lines(in image: CGImage, languageCorrection: Bool = true) throws -> [Line] {
+    static func lines(in image: CGImage, languageCorrection: Bool = true, words: Bool = false) throws -> [Line] {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = languageCorrection
         try VNImageRequestHandler(cgImage: image).perform([request])
         let w = CGFloat(image.width), h = CGFloat(image.height)
+        func pixels(_ b: CGRect) -> CGRect { // normalized, bottom-left origin → pixels, top-left
+            CGRect(x: b.minX * w, y: (1 - b.maxY) * h, width: b.width * w, height: b.height * h)
+        }
         return (request.results ?? []).compactMap { obs in
-            guard let text = obs.topCandidates(1).first?.string else { return nil }
-            let b = obs.boundingBox // normalized, bottom-left origin
-            return Line(text: text, box: CGRect(x: b.minX * w, y: (1 - b.maxY) * h, width: b.width * w, height: b.height * h))
+            guard let candidate = obs.topCandidates(1).first else { return nil }
+            let text = candidate.string
+            var line = Line(text: text, box: pixels(obs.boundingBox))
+            if words {
+                var at = text.startIndex
+                for word in text.split(separator: " ") {
+                    guard let r = text.range(of: word, range: at..<text.endIndex) else { continue }
+                    at = r.upperBound
+                    if let b = try? candidate.boundingBox(for: r)?.boundingBox { line.words.append(Word(text: String(word), box: pixels(b))) }
+                }
+            }
+            return line
         }
     }
 

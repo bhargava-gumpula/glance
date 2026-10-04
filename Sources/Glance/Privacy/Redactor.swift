@@ -19,7 +19,10 @@ enum Redactor {
         Rule(tag: "[KEY]", regex: re(#"\b(?:sk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}|(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{16,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{40,}|glpat-[A-Za-z0-9_-]{20,}|hf_[A-Za-z0-9]{30,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|whsec_[A-Za-z0-9+/=]{20,})"#)),
         Rule(tag: "[TOKEN]", regex: re(#"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"#)),
         Rule(tag: "[TOKEN]", regex: re(#"(?i)\bbearer\s+([A-Za-z0-9._~+/=-]{20,})"#), group: 1),
-        Rule(tag: "[SECRET]", regex: re(#"(?i)(?<![A-Za-z0-9_])(?:[A-Za-z0-9]+_)*(?:password|passwd|pwd|passcode|pass code|secret|api[ _-]?key|access[ _]?key|access token|auth token|token|private[ _]?key|seed phrase|recovery phrase|secret phrase|mnemonic|security answer)(?:_[A-Za-z0-9]+)*\s*[:=]\s*([^\n]+)"#), group: 1),
+        // Phase 4: passwords and PINs get their own tags, so the Send/Cancel step can name them.
+        Rule(tag: "[PASSWORD]", regex: re(#"(?i)(?<![A-Za-z0-9_])(?:password|passwd|pwd|passcode|pass code)\s*[:=]\s*([^\n]+)"#), group: 1),
+        Rule(tag: "[PIN]", regex: re(#"(?i)\b(?:cvv2?|cvc|security code|pin)\b(?:\s*(?:no\.?|number|code))?(?:\s+(?:is|was))?\s*[:#=]?\s*(\d{3,8})\b"#), group: 1),
+        Rule(tag: "[SECRET]", regex: re(#"(?i)(?<![A-Za-z0-9_])(?:[A-Za-z0-9]+_)*(?:password|passwd|pwd|passcode|pass code|secret|api[ _-]?key|access[ _]?key|access token|auth token|token|private[ _]?key|seed phrase|recovery phrase|secret phrase|mnemonic|security answer)(?:_[A-Za-z0-9]+)*\s*[:=]\s*([^\n]+)"#), group: 1, isMatch: { !isTag($0) }),
         // Crypto wallets and private keys
         Rule(tag: "[KEY]", regex: re(#"\b(?:0x)?[a-fA-F0-9]{64}\b"#)),
         Rule(tag: "[WALLET]", regex: re(#"\b0x[a-fA-F0-9]{40}\b"#)),
@@ -128,17 +131,24 @@ enum Redactor {
     /// (audit A6), and every line of a PEM private key, not just its BEGIN line (audit A10).
     static func redactLines(_ lines: [String]) -> [(text: String, hits: Int)] {
         var out: [(text: String, hits: Int)] = []
-        var inPEM = false, afterSecretLabel = false
+        var inPEM = false
+        var afterSecretLabel: String? // the tag for the value under a bare label
+        func bareLabel(_ t: String) -> String? {
+            t.range(of: #"(?i)^(?:password|passcode)$"#, options: .regularExpression) != nil ? "[PASSWORD]"
+                : t.range(of: #"(?i)^(?:pin|cvv|cvc|security code)$"#, options: .regularExpression) != nil ? "[PIN]"
+                : t.range(of: #"(?i)^(?:name|full name|account holder|cardholder|name on card)$"#, options: .regularExpression) != nil ? "[NAME]" : nil
+        }
         for line in lines {
             let t = line.trimmingCharacters(in: .whitespaces)
             if t.range(of: #"^-----BEGIN [A-Z ]*PRIVATE KEY-----"#, options: .regularExpression) != nil { inPEM = true }
-            if inPEM || (afterSecretLabel && !t.isEmpty) {
-                out.append(("[SECRET]", 1))
+            // A label right under a label (a "Account holder" heading over "Name") is a label, not the value.
+            if inPEM || (afterSecretLabel != nil && !t.isEmpty && bareLabel(t) == nil) {
+                out.append((inPEM ? "[SECRET]" : afterSecretLabel!, 1))
                 if t.range(of: #"-----END [A-Z ]*PRIVATE KEY-----"#, options: .regularExpression) != nil { inPEM = false }
-                afterSecretLabel = false
+                afterSecretLabel = nil
                 continue
             }
-            afterSecretLabel = t.range(of: #"(?i)^(?:password|passcode|pin|cvv|cvc|security code)$"#, options: .regularExpression) != nil
+            afterSecretLabel = bareLabel(t)
             out.append(redact(line))
         }
         return out
@@ -180,6 +190,11 @@ enum Redactor {
         let check = sum % 23
         let expected: Character = check == 0 ? "W" : Character(UnicodeScalar(64 + check)!)
         return chars[7] == expected
+    }
+
+    /// An already-replaced value, e.g. "[PASSWORD]", so a later, wider rule doesn't re-tag it.
+    private static func isTag(_ s: String) -> Bool {
+        s.range(of: #"^\[[A-Z]+\]$"#, options: .regularExpression) != nil
     }
 
     private static func isPhone(_ s: String) -> Bool {

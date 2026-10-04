@@ -2,7 +2,7 @@ import AppKit
 
 @main
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var hotkey: Hotkey!
     private let panel = PanelController()
@@ -11,9 +11,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let memory = MemoryRecorder()
     private let memoryStatus = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let pauseItem = NSMenuItem(title: "Pause Memory", action: #selector(togglePause), keyEquivalent: "")
+    private let chatItem = NSMenuItem(title: "Show Chat", action: #selector(toggleChat), keyEquivalent: "")
+    private let localOnlyItem = NSMenuItem(title: "Local Only", action: #selector(toggleLocalOnly), keyEquivalent: "")
+    private var localOnlyWatch: NSObjectProtocol?
 
     static func main() {
         if CommandLine.arguments.contains("--selftest") { SelfTest.run() }
+        if let i = CommandLine.arguments.firstIndex(of: "--make-iconset"), i + 1 < CommandLine.arguments.count {
+            exit(AppIcon.writeIconset(to: URL(fileURLWithPath: CommandLine.arguments[i + 1])) == AppIcon.sizes.count ? 0 : 1)
+        }
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
@@ -26,20 +32,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let menu = NSMenu()
         menu.addItem(withTitle: "Show Glance (\(Config.hotkeyDescription))", action: #selector(togglePanel), keyEquivalent: "")
+        menu.addItem(chatItem)
+        menu.delegate = self
         menu.addItem(.separator())
         memoryStatus.isEnabled = false
         menu.addItem(memoryStatus)
         menu.addItem(pauseItem)
         menu.addItem(withTitle: "Forget Last \(Config.forgetMinutes) Minutes", action: #selector(forget), keyEquivalent: "")
         menu.addItem(.separator())
+        menu.addItem(localOnlyItem)
         menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
         menu.addItem(withTitle: "Permissions…", action: #selector(showOnboarding), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Glance", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         for item in menu.items where item.action != #selector(NSApplication.terminate(_:)) { item.target = self }
         statusItem.menu = menu
+        // Phase 4: the menu item, Settings toggle and badges all read UserDefaults "localOnly".
+        showLocalOnly()
+        localOnlyWatch = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.showLocalOnly() }
+        }
 
-        // Capture indicator: eye = recording, eye.slash = paused or off, eye with a dot = skipping this window.
+        // Capture indicator: the menu-bar penguin's badge shows recording, paused/off or skipping this window.
         memory.onChange = { [weak self] in self?.showMemoryState($0) }
         showMemoryState(memory.state)
         panel.timeline = memory.timeline
@@ -58,26 +72,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        if !Permission.allGranted { onboarding.show() }
+        if !Permission.allGranted || !OnboardingController.seen { onboarding.show() }
     }
 
     @objc private func togglePanel() { panel.toggle() }
+    @objc private func toggleChat() { if panel.chatOpen { panel.hideChat() } else { panel.showMore() } }
+
+    /// "Hide Chat" while the panel is open, "Show Chat" otherwise.
+    func menuNeedsUpdate(_ menu: NSMenu) { chatItem.title = GlanceSurface.chatToggleTitle(panelOpen: panel.chatOpen, menu: true) }
     @objc private func showOnboarding() { onboarding.show() }
     @objc private func showSettings() { settings.show() }
     @objc private func togglePause() { memory.paused.toggle() }
+    @objc private func toggleLocalOnly() { UserDefaults.standard.set(!Config.localOnly, forKey: "localOnly") }
+
+    private func showLocalOnly() {
+        localOnlyItem.state = Config.localOnly ? .on : .off
+        localOnlyItem.toolTip = "AI, speech and voice stay on this Mac; every other address is blocked."
+    }
     @objc private func forget() {
         let n = memory.forgetRecent()
         log.notice("memory: forgot \(n, privacy: .public) snapshot(s)")
     }
 
     private func showMemoryState(_ state: MemoryRecorder.State) {
-        let (symbol, text): (String, String) = switch state {
-        case .recording: ("eye", "Memory: on (last \(Config.retentionMinutes) min, on this Mac)")
-        case .paused: ("eye.slash", "Memory: paused")
-        case .skipping(let why): ("eye.trianglebadge.exclamationmark", "Memory: not saving (\(why))")
-        case .off(let why): ("eye.slash", "Memory: off (\(why))")
+        let text = switch state {
+        case .recording: "Memory: on (last \(Config.retentionMinutes) min, on this Mac)"
+        case .paused: "Memory: paused"
+        case .skipping(let why): "Memory: not saving (\(why))"
+        case .off(let why): "Memory: off (\(why))"
         }
-        statusItem.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Glance: \(text)")
+        // Phase 8: a template penguin with a state badge (paused bars, "!" for not saving, a slash for off).
+        statusItem.button?.image = MenuBarGlyph.image(for: state, description: "Glance: \(text)")
+        panel.showMemory(state)
         memoryStatus.title = text
         pauseItem.title = state == .paused ? "Resume Memory" : "Pause Memory"
         pauseItem.isHidden = { if case .off = state { true } else { false } }()

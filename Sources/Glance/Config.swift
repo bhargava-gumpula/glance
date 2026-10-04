@@ -17,6 +17,8 @@ enum Config {
     static var retentionMinutes: Int { value("retentionMinutes", default: 10) }
     static var provider: String { value("provider", default: "claude") }
     static var ttsEnabled: Bool { value("ttsEnabled", default: true) }
+    /// Phase 4: nothing leaves the Mac. Local AI (Ollama, else Apple's on-device model), Apple speech, the Mac voice.
+    static var localOnly: Bool { value("localOnly", default: false) }
 
     // MARK: Voice (Phase 2)
 
@@ -55,7 +57,7 @@ enum Config {
     static let thumbnailMaxDimension = 320
     /// Most characters of recent activity sent with a question (activity log + page text). About 15k tokens:
     /// fits DeepSeek's context with room to spare. Over budget, the oldest pages shrink to their key lines.
-    static var memoryContextMaxChars: Int { value("memoryContextMaxChars", default: 60_000) }
+    static var memoryContextMaxChars: Int { value("memoryContextMaxChars", default: 20_000) }
     /// Browsers: private-window and URL checks apply to these.
     static let browsers: Set<String> = [
         "com.apple.Safari", "com.apple.SafariTechnologyPreview", "com.google.Chrome", "com.microsoft.edgemac",
@@ -73,6 +75,31 @@ enum Config {
     }
     /// Window or toolbar text that marks a private window.
     static let privateWindowMarkers = ["private browsing", "incognito", "inprivate", "private window"]
+
+    // MARK: Guide (Phase 5)
+
+    /// Menus Guide never lists (history, recent files, other people's names; Window lists open documents).
+    static let guideSkippedMenus: Set<String> = [
+        "open recent", "history", "bookmarks", "recently closed", "services", "profiles", "people", "window",
+    ]
+    static let guideMaxMenuItems = 400
+    static let guideMaxControls = 150
+    static let guideMaxOCRLines = 250
+    /// Every Guide AX call gives up after this long, so a hung app can't freeze Glance.
+    static let axTimeout: Float = 0.25
+    static let guideDebounce = 0.6
+    /// Seconds before a slow model reply counts as failed.
+    static let guideProviderTimeout = 8.0
+    /// Sends per Guide session before consent is asked again; consent also lapses after `guideConsentMinutes`.
+    static let guideMaxSends = 20
+    static let guideConsentMinutes = 10.0
+    /// Phase 6 kill switch: false = Guide v1 (tap or "next"). `defaults write ie.dublinhacx.glance guideAutoRecheck -bool NO`
+    static var guideAutoRecheck: Bool { value("guideAutoRecheck", default: true) }
+    /// A question without a selection carries the front window's text; a memory row older than this is re-read.
+    static let screenNowMaxAge = 3.0
+    static let screenNowMaxChars = 6000
+    /// Guide v2 re-says the current step after this long without progress.
+    static let guideNudgeSeconds = 20.0
 
     // MARK: AI providers
 

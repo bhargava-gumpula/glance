@@ -5,10 +5,13 @@ import SwiftUI
 /// Floating panel that sits above every app without stealing focus from it.
 @MainActor
 final class PanelController {
-    private let panel: NSPanel
+    private let panel: ChatPanel
     private let chat = ChatModel()
     private let pointTool = PointTool()
     let pet: PetController
+    /// Pip-only by default: the panel shows only after Show more or the menu's Show Glance.
+    private(set) var surface = GlanceSurface()
+    private var watchers: [AnyCancellable] = []
     /// Phase 3 memory, searched only when the user asks.
     var timeline: Timeline? {
         get { chat.timeline }
@@ -16,7 +19,7 @@ final class PanelController {
     }
 
     init() {
-        panel = NSPanel(
+        panel = ChatPanel(
             contentRect: NSRect(x: 0, y: 0, width: 420, height: 520),
             styleMask: [.nonactivatingPanel, .titled, .resizable, .fullSizeContentView],
             backing: .buffered, defer: true
@@ -28,34 +31,105 @@ final class PanelController {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.hidesOnDeactivate = false
         panel.contentView = NSHostingView(rootView: PanelView(chat: chat))
-        pet = PetController(chat: chat)
-        pet.show()
+        pet = PetController(chat: chat) // Phase 8: hidden until ⌥Space (appear())
 
         chat.onPoint = { [weak self] in self?.pointTool.start() }
         pointTool.onSelect = { [weak self] rect, screen in
             guard let self else { return }
             self.chat.pointed(at: rect, on: screen)
             self.pet.point(at: rect, ring: false)
-            self.focusInput()
+            self.focusTyping()
         }
-        pointTool.onCancel = { [weak self] in self?.focusInput() }
+        pointTool.onCancel = { [weak self] in self?.focusTyping() }
         pet.onTap = { [weak self] in self?.petTapped() }
+        pet.onShowMore = { [weak self] in self?.showMore() }
+        panel.onEsc = { [weak self] in self?.hideChat() }
+        pet.onQuiet = { [weak self] in self?.answerMaybeDone() }
+        chat.onShowMore = { [weak self] in self?.showMore() }
+        chat.onClearHighlight = { [weak self] in self?.clearSelectionHighlight() }
+        watchers = [chat.$busy.sink { [weak self] _ in DispatchQueue.main.async { self?.answerMaybeDone() } }]
+        GuideHighlight.pet = pet
+        // Integration: Pip stays on screen during a Guide session or while a Send/Cancel question is pending.
+        pet.keepVisible = { [weak chat = self.chat] in (chat?.guide.active ?? false) || SendConfirm.shared.prompt != nil }
+        GuideHighlight.avoid = { [weak self] in self?.avoid($0) }
+        Guide.startTracking()
     }
 
-    /// Clicking Pip opens the chat to message it (or hides the chat).
+    /// Guide: move the chat to the other side of the screen when it covers what Pip points at.
+    func avoid(_ rect: CGRect) {
+        guard panel.isVisible, panel.frame.intersects(rect),
+              let vf = (NSScreen.screens.first { $0.frame.intersects(rect) } ?? NSScreen.main)?.visibleFrame else { return }
+        let x = rect.midX > vf.midX ? vf.minX + 16 : vf.maxX - panel.frame.width - 16
+        panel.setFrameOrigin(NSPoint(x: x, y: panel.frame.minY))
+    }
+
+    /// Clicking Pip opens its one-line field (or hides Glance when it's open).
     private func petTapped() {
-        if panel.isVisible { hide() } else { show(pointing: false); focusInput() }
+        if surface.pipTapped() { showPip(focus: true) } else { hide() }
     }
 
     private func hide() {
+        surface.hide()
+        pet.chatOpen = false
         panel.orderOut(nil)
-        pointTool.clear()
+        clearSelectionHighlight()
+        pet.hideCompact()
         pet.goHome()
+        pet.disappear()
     }
 
-    var isVisible: Bool { panel.isVisible }
+    /// Pip's bubble "Show more" (or the panel's ✕): the full chat with the complete answer and history. Pip stays.
+    func showMore() {
+        surface.showMore()
+        if surface.panel { pet.appear(); showPanel(); pet.hideCompact() } else { closePanel() }
+        pet.chatOpen = surface.panel
+    }
+
+    /// Esc in the panel, or the menu's Hide Chat: the panel goes; Pip and its answer bubble stay.
+    func hideChat() {
+        guard surface.panel else { return }
+        surface.hideChat()
+        closePanel()
+        pet.chatOpen = false
+    }
+
+    var chatOpen: Bool { surface.panel }
+
+    private func closePanel() {
+        panel.orderOut(nil)
+        if surface.compact { pet.showCompact(focus: false) }
+    }
+
+    private func showPip(focus: Bool) {
+        pet.appear()
+        if surface.compact { pet.showCompact(focus: focus) }
+    }
+
+    /// Where typing goes now: the panel's field when it's open, else Pip's one-line field.
+    private func focusTyping() {
+        if surface.panel { focusInput() } else { surface.compact = true; surface.pip = true; pet.showCompact(focus: true) }
+    }
+
+    /// The drag-box highlight lasts until its answer is done (streamed and spoken). Guide's ring is its own.
+    private func answerMaybeDone() {
+        if ChatModel.clearsHighlight(.answerSettled(busy: chat.busy, speaking: pet.isSpeaking),
+                                     guideActive: chat.guide.active, asked: chat.askedSinceSelection) {
+            clearSelectionHighlight()
+        }
+    }
+
+    private func clearSelectionHighlight() {
+        guard !chat.guide.active else { return }
+        pointTool.clear()
+        pet.stopPointing()
+    }
+
+    var isVisible: Bool { surface.pip || surface.panel }
 
     func showStatus(_ text: String) { chat.status = text }
+
+    /// Phase 8: shows memory paused / not saving / off as a chip in the panel.
+    func showMemory(_ state: MemoryRecorder.State) { chat.memoryState = state }
 
     /// Key-event times (seconds since boot, from the events themselves), so a slow mic start can't turn a tap into a hold.
     private var pressedAt: TimeInterval?
@@ -68,7 +142,7 @@ final class PanelController {
         holdTimer = Task { [weak self] in
             try? await Task.sleep(for: .seconds(Config.holdToTalkSeconds))
             guard let self, !Task.isCancelled else { return }
-            if !self.panel.isVisible { self.show(pointing: false) }
+            if !self.isVisible { self.surface.hold(); self.pet.appear() }
             self.chat.listening = true
         }
         chat.startRecording()
@@ -81,10 +155,14 @@ final class PanelController {
         holdTimer?.cancel()
         if Self.isTap(pressed: pressed, released: time) {
             chat.discardRecording()
-            toggle()
+            switch surface.tap(guideActive: chat.guide.active) {
+            case .guideNext: chat.guide.next() // during a Guide session a tap means "next"
+            case .hide: hide()
+            case .showToType: showPip(focus: true) // Pip + its one-line field; no panel, no pointing overlay
+            }
         } else {
             // The release can beat the hold timer; the question needs the panel either way.
-            if !panel.isVisible { show(pointing: false) }
+            if !isVisible { surface.hold(); pet.appear() }
             chat.askFromRecording()
         }
     }
@@ -93,16 +171,12 @@ final class PanelController {
         released - pressed < Config.holdToTalkSeconds
     }
 
-    /// ⌥Space: show the panel and start pointing, or hide everything.
+    /// Menu "Show Glance": the full panel (or hide everything).
     func toggle() {
-        if panel.isVisible {
-            hide()
-        } else {
-            show(pointing: true)
-        }
+        if surface.menuShow() { pet.appear(); showPanel(); focusInput(); pet.chatOpen = true } else { hide() }
     }
 
-    private func show(pointing: Bool) {
+    private func showPanel() {
         if let screen = NSScreen.main {
             let frame = screen.visibleFrame
             // Left of Pip's top-right home, so Pip and its bubble don't cover the chat.
@@ -110,8 +184,6 @@ final class PanelController {
                                          y: frame.maxY - panel.frame.height - 24))
         }
         panel.orderFrontRegardless()
-        pet.appear()
-        if pointing { pointTool.start() }
     }
 
     private func focusInput() {
@@ -140,7 +212,9 @@ final class ChatModel: ObservableObject {
     @Published var turns: [Turn] = []
     @Published var input = ""
     @Published var busy = false
-    @Published var status = "Drag a box over anything, then ask about it."
+    @Published var status = "Ask about what's on screen, or click Point to select part of it."
+    /// Display only (Phase 8 memory chip).
+    @Published var memoryState: MemoryRecorder.State = .recording
     /// Hold-to-talk: true while ⌥Space is held, `transcribing` until the text is back.
     @Published var listening = false {
         didSet {
@@ -159,9 +233,29 @@ final class ChatModel: ObservableObject {
         }
     }
     var onPoint: (() -> Void)?
+    var onShowMore: (() -> Void)?
+    /// Clears the drag-box highlight (PointTool overlay and Pip's pointing pose).
+    var onClearHighlight: (() -> Void)?
+    /// A question was asked about the current selection; its highlight goes once that answer is done.
+    private(set) var askedSinceSelection = false
+    /// The last question failed (error card in the panel); Pip's bubble offers Show more.
+    @Published var failed = false
     var timeline: Timeline?
 
-    let mode = Mode.explain
+    enum HighlightEvent { case answerSettled(busy: Bool, speaking: Bool), newQuestion, hide, stop }
+
+    /// When the drag-box highlight goes: its answer finished streaming and speaking, a new question, hide or Stop.
+    nonisolated static func clearsHighlight(_ e: HighlightEvent, guideActive: Bool, asked: Bool) -> Bool {
+        guard !guideActive else { return false } // Guide controls its own ring
+        switch e {
+        case .answerSettled(let busy, let speaking): return asked && !busy && !speaking
+        case .newQuestion: return asked
+        case .hide, .stop: return true
+        }
+    }
+
+    @Published var mode = Mode.explain
+    lazy var guide = GuideSession(chat: self)
     private var capture: Task<ContextPacket?, Never>?
     /// The user's own words and the answers; ContextPacket.send() redacts and attaches the selection.
     private var history: [ChatMessage] = []
@@ -220,6 +314,12 @@ final class ChatModel: ObservableObject {
             do {
                 let heard = try await Voice.transcribe(wav: wav, with: Voice.sttChain())
                 guard serial == mine else { return } // the user moved on (new question, selection or recording)
+                // Phase 4: a spoken "send" / "cancel" answers a waiting Send/Cancel instead of asking a new question.
+                if SendConfirm.shared.prompt != nil, let send = SendConfirm.spokenAnswer(heard.text) {
+                    transcribing = false
+                    SendConfirm.shared.answer(send)
+                    return
+                }
                 log.notice("voice: transcribed by \(heard.engine, privacy: .public) in \(Date().timeIntervalSince(released), format: .fixed(precision: 2), privacy: .public) s")
                 let shown = heard.engine == "ElevenLabs" ? "🎙 \(heard.text)" : "🎙 \(heard.text) (\(heard.engine))"
                 transcribing = false
@@ -233,7 +333,9 @@ final class ChatModel: ObservableObject {
 
     /// A new selection starts a new conversation.
     func pointed(at rect: CGRect, on screen: NSScreen) {
-        stop()
+        stop(clearHighlight: false) // the new selection is already highlighted
+        askedSinceSelection = false
+        failed = false
         serial += 1
         turns = []
         history = []
@@ -255,6 +357,7 @@ final class ChatModel: ObservableObject {
                 return packet
             } catch {
                 status = "Couldn't read the screen: \(error.localizedDescription)"
+                failed = true
                 return nil
             }
         }
@@ -271,7 +374,9 @@ final class ChatModel: ObservableObject {
 
     func point() { onPoint?() }
 
-    func stop() {
+    func stop(clearHighlight: Bool = true) {
+        if clearHighlight, Self.clearsHighlight(.stop, guideActive: guide.active, asked: askedSinceSelection) { onClearHighlight?() }
+        guide.stop()
         speaker.stop()
         answering?.cancel()
         answering = nil
@@ -280,15 +385,29 @@ final class ChatModel: ObservableObject {
 
     /// `spokenAt`: when the user released ⌥Space, for the release → first spoken word log.
     private func ask(_ question: String, shown: String, spokenAt: Date? = nil) {
-        if busy { stop() } // a spoken question replaces the one being answered
+        // Guide first, so no other mode can take over a "show me how" line. Inside a session, Guide replaces its own step.
+        let rule = Guide.intent(question) ?? (guide.active ? "session active" : mode.name == Mode.guide.name ? "Guide chip" : nil)
+        let toGuide = rule != nil
+        log.notice("guide: route \(toGuide ? "guide" : "explain", privacy: .public) (\(rule ?? "no rule matched", privacy: .public))")
+        if busy && !(toGuide && guide.active) { stop() } // a spoken question replaces the one being answered
+        if toGuide {
+            turns.append(Turn(kind: .user, text: shown))
+            _ = guide.handle(question)
+            return
+        }
+        if Self.clearsHighlight(.newQuestion, guideActive: false, asked: askedSinceSelection) { onClearHighlight?() }
+        askedSinceSelection = true
+        failed = false
         serial += 1
         busy = true
         turns.append(Turn(kind: .user, text: shown))
         answering = Task {
+            let began = Date() // log only: reading the selection and building memory count as thinking too
             defer { if !Task.isCancelled { busy = false } }
             let provider: AIProvider
             do { provider = try Providers.current() } catch {
                 turns.append(Turn(kind: .notice, text: error.localizedDescription))
+                failed = true
                 return
             }
             let source = capture
@@ -298,6 +417,11 @@ final class ChatModel: ObservableObject {
             guard !Task.isCancelled else { return }
             // A new selection while waiting: this question belongs to the old one.
             guard capture == source else { return }
+            // No selection: the front window's text (newest memory row, or a fresh read) joins the question. Text only.
+            if !(packet?.hasSelection ?? false), let now = await ScreenNow.read(timeline: timeline) {
+                guard !Task.isCancelled, capture == source else { return }
+                packet = (packet ?? .memoryOnly()).withScreenNow(app: now.app, title: now.title, text: now.text)
+            }
             // Recent activity joins every conversation; follow-ups refresh it when new pages were stored since.
             if let timeline {
                 let since = Date().timeIntervalSince1970 - Double(Config.retentionMinutes * 60)
@@ -313,11 +437,16 @@ final class ChatModel: ObservableObject {
             let announce = history.isEmpty || (reveal && !revealed) || Self.needsPreview(first: previewedFor, now: target)
             if announce { previewedFor = target }
             revealed = reveal
+            var confirming = false
             let answer = ContextPacket.send(packet, history: history, question: question, reveal: reveal,
                                             announce: announce, mode: mode, provider: provider) { preview in
+                confirming = preview.confirmPrompt != nil
                 var text = "Sending to \(preview.providerName): "
                 if preview.image == nil && preview.selectedText.isEmpty {
-                    text += "your question" + (preview.memory.isEmpty ? "." : " and your recent activity (text).")
+                    let screen = preview.memory.hasPrefix("On screen now")
+                    let recent = !preview.memory.isEmpty && !(screen && preview.memoryPages == 0)
+                    text += "your question" + (screen ? ", what's on screen now" : "") + (recent ? " and your recent activity" : "")
+                        + (preview.memory.isEmpty ? "." : " (text).")
                 } else {
                     text += preview.imagesSent ? "an image of your selection, and the text below." : "the selection’s text only (image stays on this Mac)."
                 }
@@ -346,14 +475,33 @@ final class ChatModel: ObservableObject {
             }
             do {
                 var raw = ""
+                // Log only: how long "Thinking…" lasted, and when the spoken "Say:" sentence was complete.
+                let asked = Date()
+                var firstToken = false, sayDone = false
+                defer { log.notice("answer: total \(Date().timeIntervalSince(asked), format: .fixed(precision: 2), privacy: .public) s, \(raw.count, privacy: .public) characters") }
                 for try await delta in answer {
                     guard !Task.isCancelled else { return } // turns may already belong to a new selection
                     raw += delta
+                    if !firstToken {
+                        firstToken = true
+                        log.notice("answer: thinking \(Date().timeIntervalSince(began), format: .fixed(precision: 2), privacy: .public) s until the first word (\(asked.timeIntervalSince(began), format: .fixed(precision: 2), privacy: .public) s reading the screen and memory)")
+                    }
+                    if !sayDone, case .summary(_, true, _) = Voice.splitSpoken(raw) {
+                        sayDone = true
+                        log.notice("answer: Say line complete at \(Date().timeIntervalSince(asked), format: .fixed(precision: 2), privacy: .public) s")
+                    }
                     turns[index].text = speaker.answer(raw)
                     answerRaw = (turns[index].id, raw)
                 }
                 // A cancelled stream just ends; it is not a finished answer and must not enter the history.
                 guard !Task.isCancelled else { return }
+                // Phase 4: Cancel on the Send/Cancel step ends the stream with nothing sent.
+                if raw.isEmpty && confirming {
+                    speaker.stop()
+                    turns.remove(at: index)
+                    turns.append(Turn(kind: .notice, text: "Cancelled. Nothing was sent."))
+                    return
+                }
                 turns[index].text = speaker.answer(raw, final: true)
                 history += [ChatMessage(role: .user, text: question), ChatMessage(role: .assistant, text: raw)]
             } catch is CancellationError {
@@ -361,6 +509,7 @@ final class ChatModel: ObservableObject {
                 guard !Task.isCancelled else { return }
                 if turns[index].text.isEmpty { turns.remove(at: index) }
                 turns.append(Turn(kind: .notice, text: error.localizedDescription))
+                failed = true
             }
         }
     }
@@ -368,11 +517,20 @@ final class ChatModel: ObservableObject {
 
 struct PanelView: View {
     @ObservedObject var chat: ChatModel
+    @ObservedObject var confirm = SendConfirm.shared
+    @AppStorage("localOnly") private var localOnly = false
+    @State private var atBottom = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label("Glance · \(chat.mode.name)", systemImage: "eye").font(.headline)
+                Button { chat.mode = chat.mode.name == Mode.guide.name ? .explain : .guide } label: {
+                    Label("Guide", systemImage: chat.mode.name == Mode.guide.name ? "hand.point.up.left.fill" : "hand.point.up.left")
+                }
+                .help(chat.mode.name == Mode.guide.name ? "Your next question starts a step-by-step Guide. Click to go back to Explain"
+                      : "Step by step: Pip points at each button to click for your next question")
+                if localOnly { LocalOnlyBadge() }
                 Spacer()
                 Button { chat.muted.toggle() } label: {
                     Image(systemName: chat.muted ? "speaker.slash" : "speaker.wave.2")
@@ -380,43 +538,82 @@ struct PanelView: View {
                 .help(chat.muted ? "Answers are text only. Click to read them aloud" : "Answers are read aloud. Click to mute")
                 Button { chat.point() } label: { Label("Point", systemImage: "viewfinder") }
                     .help("Drag a box over something on screen")
+                Button { chat.onShowMore?() } label: { Label(GlanceSurface.chatToggleTitle(panelOpen: true), systemImage: "xmark") }
+                    .help("Hide the chat; Pip and its answer stay (Esc)")
             }
             if chat.listening {
                 Label("Listening… release \(Config.hotkeyDescription) to ask", systemImage: "mic.fill")
                     .font(.callout.bold()).foregroundStyle(.red)
             } else if chat.transcribing {
                 Label("Transcribing…", systemImage: "waveform").font(.callout).foregroundStyle(.secondary)
+            } else if let problem = Problem.fromStatus(chat.status) {
+                ProblemCard(problem: problem, compact: true)
             } else {
-                Text(chat.status).font(.caption).foregroundStyle(.secondary)
+                Text(chat.status).font(.callout).foregroundStyle(.secondary)
+            }
+            if let memory = Problem.memory(chat.memoryState) {
+                ProblemCard(problem: memory, compact: true)
             }
 
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 10) {
+                    LazyVStack(alignment: .leading, spacing: 14) {
                         ForEach(chat.turns) { TurnView(turn: $0) }
                         if !chat.busy, chat.turns.last?.kind == .assistant {
-                            HStack {
+                            HStack(spacing: 8) {
                                 ForEach(chat.mode.followUps, id: \.label) { f in
                                     Button(f.label) { chat.followUp(f) }
+                                        .buttonStyle(.bordered).buttonBorderShape(.capsule).controlSize(.small)
                                 }
                             }
                         }
                         Color.clear.frame(height: 1).id("bottom")
+                            .onAppear { atBottom = true }
+                            .onDisappear { atBottom = false }
                     }
+                    .padding(.vertical, 4)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .onChange(of: chat.turns.last?.text) { proxy.scrollTo("bottom") }
-                .onChange(of: chat.turns.count) { proxy.scrollTo("bottom") }
+                // Follow the stream only while the user is at the bottom; reading earlier text isn't yanked away.
+                .onChange(of: chat.turns.last?.text) { if atBottom { proxy.scrollTo("bottom") } }
+                .onChange(of: chat.turns.count) { if atBottom || chat.turns.last?.kind == .user { proxy.scrollTo("bottom") } }
+                .overlay(alignment: .bottomTrailing) {
+                    if !atBottom, !chat.turns.isEmpty {
+                        Button { withAnimation { proxy.scrollTo("bottom") } } label: {
+                            Label("Latest", systemImage: "arrow.down").font(.caption.weight(.semibold))
+                        }
+                        .buttonStyle(.borderedProminent).buttonBorderShape(.capsule).controlSize(.small)
+                        .padding(8)
+                        .help("Scroll to the latest message")
+                    }
+                }
             }
 
-            HStack {
+            if let prompt = confirm.prompt {
+                HStack(spacing: 8) {
+                    Label(prompt, systemImage: "lock.shield").font(.callout.bold())
+                    Spacer()
+                    Button("Cancel") { confirm.answer(false) }.keyboardShortcut(.cancelAction).buttonStyle(.bordered)
+                    Button("Send") { confirm.answer(true) }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+                }
+                .padding(10)
+                .background(Color.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.blue.opacity(0.25)))
+                .help("Say \u{201C}send\u{201D} or \u{201C}cancel\u{201D} with \(Config.hotkeyDescription) too")
+            }
+            HStack(spacing: 8) {
                 TextField("Ask about it…", text: $chat.input)
                     .textFieldStyle(.roundedBorder)
+                    .controlSize(.large)
                     .onSubmit { chat.submit() }
                 if chat.busy {
-                    Button("Stop") { chat.stop() }
+                    Button { chat.stop() } label: { Label("Stop", systemImage: "stop.fill") }
+                        .buttonStyle(.borderedProminent).tint(.red).controlSize(.large)
+                        .help("Stop the answer and the voice")
                 } else {
-                    Button("Ask") { chat.submit() }.disabled(chat.input.isEmpty)
+                    Button { chat.submit() } label: { Label("Ask", systemImage: "arrow.up") }
+                        .buttonStyle(.borderedProminent).controlSize(.large)
+                        .disabled(chat.input.isEmpty)
                 }
             }
         }
@@ -435,16 +632,20 @@ private struct TurnView: View {
             HStack {
                 Spacer(minLength: 40)
                 Text(turn.text)
-                    .padding(8)
-                    .background(Color.accentColor.opacity(0.18), in: RoundedRectangle(cornerRadius: 10))
+                    .padding(.horizontal, 10).padding(.vertical, 7)
+                    .background(Color.accentColor.opacity(0.18), in: RoundedRectangle(cornerRadius: 12))
+                    .textSelection(.enabled)
             }
         case .assistant:
-            Text(markdown(turn.text.isEmpty ? "…" : turn.text)).textSelection(.enabled)
+            AnswerView(text: turn.text)
         case .preview:
-            HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 8) {
+                // Phase 4: big enough to see the blacked-out lines; click to enlarge.
                 if let image = turn.image {
-                    Image(nsImage: image).resizable().scaledToFit().frame(maxWidth: 90, maxHeight: 70)
+                    Image(nsImage: image).resizable().scaledToFit().frame(maxWidth: .infinity, maxHeight: 220)
                         .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .onTapGesture { PreviewPeek.show(image) }
+                        .help("Click to enlarge")
                 }
                 Text(turn.text).font(.caption).foregroundStyle(.secondary).lineLimit(12)
             }
@@ -452,13 +653,8 @@ private struct TurnView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
         case .notice:
-            Label(turn.text, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange)
+            ProblemCard(problem: Problem.classify(turn.text))
         }
-    }
-
-    private func markdown(_ s: String) -> AttributedString {
-        (try? AttributedString(markdown: s, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
-            ?? AttributedString(s)
     }
 }
 
@@ -468,5 +664,78 @@ extension ChatModel {
     nonisolated static func needsPreview(first: (String, Bool)?, now: (String, Bool)) -> Bool {
         guard let first else { return true }
         return first != now
+    }
+}
+
+/// Which parts of Glance are on screen (pure; selftested). Pip-only by default: a tap shows Pip with its one-line
+/// field; the panel appears only after Show more or the menu's Show Glance.
+struct GlanceSurface: Equatable {
+    var pip = false
+    var compact = false
+    var panel = false
+
+    enum TapAction: Equatable { case guideNext, hide, showToType }
+
+    /// ⌥Space tap. Never starts pointing; the Point buttons do.
+    mutating func tap(guideActive: Bool) -> TapAction {
+        if guideActive { return .guideNext }
+        if pip || panel { self = GlanceSurface(); return .hide }
+        pip = true
+        compact = true
+        return .showToType
+    }
+
+    /// Show more / Hide chat toggle the panel; Pip stays.
+    mutating func showMore() {
+        panel.toggle()
+        pip = true
+    }
+
+    /// Esc in the panel or Hide Chat: only the panel goes.
+    mutating func hideChat() { panel = false }
+
+    /// The chat toggle's label: Pip's bubble link and the panel button, or (`menu`) the menu-bar item.
+    static func chatToggleTitle(panelOpen: Bool, menu: Bool = false) -> String {
+        switch (panelOpen, menu) {
+        case (true, false): return "Hide chat"
+        case (false, false): return "Show more"
+        case (true, true): return "Hide Chat"
+        case (false, true): return "Show Chat"
+        }
+    }
+
+    /// Menu Show Glance: true = show the panel, false = hide everything.
+    mutating func menuShow() -> Bool {
+        if pip || panel { self = GlanceSurface(); return false }
+        pip = true
+        panel = true
+        return true
+    }
+
+    /// Clicking Pip: true = open the one-line field, false = hide.
+    mutating func pipTapped() -> Bool {
+        if compact || panel { self = GlanceSurface(); return false }
+        pip = true
+        compact = true
+        return true
+    }
+
+    mutating func hold() { pip = true }
+    mutating func hide() { self = GlanceSurface() }
+}
+
+/// The chat panel. Esc hides the chat, not Glance, even from inside its text field (whose editor would
+/// otherwise take Esc); while a Send/Cancel question is open, Esc still means Cancel.
+final class ChatPanel: NSPanel {
+    var onEsc: (() -> Void)?
+
+    nonisolated static func escHidesChat(keyCode: UInt16, confirmOpen: Bool) -> Bool { keyCode == 53 && !confirmOpen }
+
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown, Self.escHidesChat(keyCode: event.keyCode, confirmOpen: SendConfirm.shared.prompt != nil) {
+            onEsc?()
+            return
+        }
+        super.sendEvent(event)
     }
 }

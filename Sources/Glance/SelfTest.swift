@@ -114,9 +114,9 @@ enum SelfTest {
             ("brokerage account", "Brokerage account number: 5RT-28473", "[ID]"),
             ("bank account", "Account number 12345678", "[ID]"),
             ("sort code", "Sort code 93-11-52", "[ID]"),
-            ("CVV", "CVV: 123", "[ID]"),
+            ("CVV", "CVV: 123", "[PIN]"),
             ("2FA code", "Your verification code is 482913", "[ID]"),
-            ("password", "Password: hunter2!", "[SECRET]"),
+            ("password", "Password: hunter2!", "[PASSWORD]"),
             ("username label", "Username: aoife_k", "[USERNAME]"),
             ("signed in as", "Signed in as aoifek", "[USERNAME]"),
             ("handle", "Follow @aoife_kelly for more", "[USERNAME]"),
@@ -175,7 +175,7 @@ enum SelfTest {
             check(red(card).hasPrefix("[CARD]") && !red(card).contains("4242 4242") && !red(card).contains("1111 1111"), "A5 card before expiry/CVC: \(red(card))")
         }
         let pwd = Redactor.redactLines(["Email", "aoife@example.ie", "Password", "•••••••••••", "Sign in"])
-        check(pwd[3].hits > 0 && pwd[3].text == "[SECRET]" && pwd[4].hits == 0, "A6 value under a bare Password label")
+        check(pwd[3].hits > 0 && pwd[3].text == "[PASSWORD]" && pwd[4].hits == 0, "A6 value under a bare Password label")
         for otp in ["Your code is 482913", "482913 is your verification code", "G-482913 is your Google verification code.",
                     "Enter code 482913", "Your WhatsApp code: 123-456"] {
             check(!red(otp).contains("482913") && !red(otp).contains("123-456"), "A7 2FA: \(otp) → \(red(otp))")
@@ -274,10 +274,17 @@ enum SelfTest {
               "spoken: Say line is spoken, the rest is shown")
         check(Voice.speakable("**16 GB** is `enough`") == "16 GB is enough", "speakable: markdown dropped")
 
+        // Phase 8
+        Problem.selfTest(check)
+        AnswerBlock.selfTest(check)
+        AppIcon.selfTest(check)
+        MenuBarGlyph.selfTest(check)
         PipSprite.selfTest(check)
         PetGeometry.selfTest(check)
         PetBubbleView.selfTest(check)
         PetView.selfTest(check)
+        GuideTests.run(check) // Phase 5
+        Phase6Tests.run(check) // Phase 6
         // Phase 3: timeline (temp database)
         let dbPath = NSTemporaryDirectory() + "glance-selftest-\(getpid()).sqlite"
         defer { for ext in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: dbPath + ext) } }
@@ -332,7 +339,7 @@ enum SelfTest {
                   "budget: every page keeps its title and key lines")
             check(!cut.text.contains("filler line 1 for page 0\n") && cut.text.contains("filler line 1 for page 5"),
                   "budget: the oldest pages are trimmed first, the newest keep their text")
-            check(Config.memoryContextMaxChars == 60_000, "budget: default 60k characters")
+            check(Config.memoryContextMaxChars == 20_000, "budget: default 20k characters (60k made slow providers take 30-60 s)")
             let tb = Date()
             let timed = ContextPacket.memoryOnly().withMemory(MemoryContext.build(rows: big, now: Date(timeIntervalSince1970: 600))!)
             print(String(format: "      memory context: build + redact %d characters in %.0f ms (once per question)",
@@ -548,6 +555,8 @@ enum SelfTest {
             RunLoop.main.run(until: Date().addingTimeInterval(0.02)) // first worker is mid-speech
             s.begin(t); _ = s.answer("Say: Second answer.\n", final: true)
         }.last == "Second answer.", "speaker: a cancelled worker doesn't silence the next answer")
+
+        Phase4Tests.run(check)
 
         print(failures == 0 ? "selftest: all passed" : "selftest: \(failures) failed")
         exit(failures == 0 ? 0 : 1)
