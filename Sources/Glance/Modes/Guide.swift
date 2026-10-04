@@ -150,6 +150,9 @@ struct GuideStep: Decodable, Sendable {
     var expect: String?
     var next: [Next]?
     var last: Bool?
+    /// v2 re-check only: ok | wrong | not_yet, and what the model saw.
+    var check: String?
+    var observed: String?
 
     static func parse(_ raw: String) -> GuideStep? {
         guard let first = Guide.objects(in: raw).first else { return nil }
@@ -166,12 +169,13 @@ struct GuideStep: Decodable, Sendable {
 extension ContextPacket {
     /// Adds Guide's menu, control and screen-text lists, every label redacted here. Ids: M#, then A#, then O#
     /// (OCR lines top to bottom), each the 1-based index into the list that stays on the Mac.
-    func withGuide(progress: [String], windowTitle: String?, sheetTitle: String?, menus: [String], controls: [String]) -> ContextPacket {
+    func withGuide(progress: [String], lastStep: String? = nil, windowTitle: String?, sheetTitle: String?, menus: [String], controls: [String]) -> ContextPacket {
         var copy = self
         var hits = 0
         func r(_ s: String) -> String { let x = Redactor.redact(s); hits += x.hits; return x.text }
         var t = "GOAL: {GOAL}\n"
         t += "PROGRESS: " + (progress.isEmpty ? "(none)" : progress.enumerated().map { "\($0 + 1). \($1)" }.joined(separator: " | ")) + "\n"
+        if let lastStep { t += "LAST STEP: \(r(lastStep))\n" }
         t += "APP: \(appName)"
         if let w = windowTitle { t += " — window \"\(r(w))\"" }
         if let s = sheetTitle { t += "; sheet: \"\(r(s))\"" }
@@ -298,6 +302,8 @@ final class GuideSession {
     /// Consent holds for the same app and session, at most as many hidden items as approved, 20 sends, 10 min.
     private var consent: (pid: pid_t, redactions: Int, at: Date)?
     private var sends = 0
+    /// Guide v2; nil when `Config.guideAutoRecheck` is off (v1: tap or "next").
+    private var auto: GuideAuto?
 
     init(chat: ChatModel) { self.chat = chat }
 
@@ -308,8 +314,12 @@ final class GuideSession {
         let onEsc: (NSEvent) -> Void = { [weak self] e in
             guard e.keyCode == 53 else { return }
             MainActor.assumeIsolated {
-                guard let self, self.active,
-                      MenuFollower.escStops(menuOpen: self.follower?.menuOpen ?? false,
+                guard let self, self.active else { return }
+                if let c = self.auto?.lastCorrection, Date().timeIntervalSince(c) < 15 {
+                    self.auto?.lastCorrection = nil // that Esc follows our own "Press Esc"
+                    return
+                }
+                guard MenuFollower.escStops(menuOpen: self.follower?.menuOpen ?? false,
                                             lastMenuActivity: self.follower?.lastMenuActivity, now: Date()) else { return }
                 log.notice("guide: Esc → stop")
                 self.stop(say: "Stopped.")
@@ -349,6 +359,7 @@ final class GuideSession {
         stepNumber = 0
         sends = 0
         consent = nil
+        auto = Config.guideAutoRecheck ? GuideAuto(session: self, pid: pid) : nil
         chat.mode = .guide
         watchEsc()
         GuideHighlight.begin()
@@ -372,6 +383,7 @@ final class GuideSession {
     func skip() {
         guard active else { return }
         if let s = step { progress.append("user skipped " + Guide.describe(s)) }
+        if let auto, let s = step { auto.skipped(s); return }
         runStep(userText: nil)
     }
 
@@ -389,6 +401,8 @@ final class GuideSession {
         idle?.cancel()
         follower?.stop()
         follower = nil
+        auto?.stop()
+        auto = nil
         speaker.stop()
         chat.busy = false
         goal = nil
@@ -396,7 +410,8 @@ final class GuideSession {
         if chat.mode.name == Mode.guide.name { chat.mode = .explain }
     }
 
-    private func runStep(userText: String?) {
+    private func runStep(userText: String?, lastStep: String? = nil) {
+        auto?.disarm()
         task?.cancel()
         follower?.stop()
         follower = nil
@@ -419,7 +434,7 @@ final class GuideSession {
             snap = await snapshot
             guard !Task.isCancelled else { return }
             log.notice("guide: snapshot \(self.snap.menus.entries.count, privacy: .public) menus, \(self.snap.controls.count, privacy: .public) controls, \(captured.lines.count, privacy: .public) lines in \(Date().timeIntervalSince(started), format: .fixed(precision: 2), privacy: .public) s")
-            let packet = captured.withGuide(progress: progress, windowTitle: snap.windowTitle, sheetTitle: snap.sheetTitle,
+            let packet = captured.withGuide(progress: progress, lastStep: lastStep, windowTitle: snap.windowTitle, sheetTitle: snap.sheetTitle,
                                             menus: snap.menus.entries.map(\.display), controls: snap.controls.map(\.display))
             self.packet = packet
             let provider: AIProvider
@@ -478,20 +493,29 @@ final class GuideSession {
             }
             return
         }
+        if let c = s.check { log.notice("guide: re-check \(c, privacy: .public)") }
+        if s.check == "not_yet", let auto, auto.keepWaiting() { return }
+        present(s)
+    }
+
+    /// Shows one step. `target` is given for a local advance; otherwise it is resolved from the reply.
+    private func present(_ s: GuideStep, target given: GuideTarget? = nil) {
         step = s
         let say = s.say ?? s.label ?? ""
         log.notice("guide: step status \(s.status, privacy: .public) ref \(s.ref ?? "null", privacy: .public) role \(s.role ?? "-", privacy: .public) label \(s.label ?? "-", privacy: .public) path \((s.menu_path ?? []).joined(separator: " › "), privacy: .public) last \(s.last ?? false, privacy: .public)")
         switch s.status {
         case "done":
+            auto?.disarm()
             chat.turns.append(.init(kind: .assistant, text: say.isEmpty ? "Done!" : say))
             GuideHighlight.show(nil, say: say.isEmpty ? "Done!" : say)
             finish()
         case "blocked", "not_found":
+            auto?.disarm()
             chat.turns.append(.init(kind: .assistant, text: say))
             GuideHighlight.show(nil, say: say)
         default:
             stepNumber += 1
-            let target = Locator.resolve(s, snap, packet ?? .memoryOnly())
+            let target = given ?? Locator.resolve(s, snap, packet ?? .memoryOnly())
             var text = "**Step \(stepNumber):** \(Guide.describe(s))\n\(say)"
             if let why = s.why { text += "\n_Why:_ \(why)" }
             chat.turns.append(.init(kind: .assistant, text: text))
@@ -499,6 +523,7 @@ final class GuideSession {
             if case .none = target { GuideHighlight.show(nil, say: say); speakStep(say); return }
             GuideHighlight.show(target, say: say)
             speakStep(say)
+            auto?.arm(step: s, target: target)
             if case .menuPath(let entry, let bar) = target { follow(entry.path, bar: bar, last: s.last ?? false) }
             resetIdle()
         }
@@ -520,7 +545,9 @@ final class GuideSession {
             case .done:
                 self.follower?.stop()
                 self.follower = nil
-                if last {
+                if let auto = self.auto, !last {
+                    auto.stepSucceeded()
+                } else if last {
                     self.progress.append(path.joined(separator: " › ") + " → done")
                     GuideHighlight.show(nil, say: "Done!")
                     self.finish()
@@ -549,6 +576,7 @@ final class GuideSession {
 
     /// After 90 s without progress Pip goes home; the session can still be resumed with "next".
     private func resetIdle() {
+        auto?.poke()
         idle?.cancel()
         idle = Task { [weak self] in
             try? await Task.sleep(for: .seconds(90))
@@ -557,6 +585,61 @@ final class GuideSession {
             self?.follower?.stop()
             self?.follower = nil
         }
+    }
+
+    // MARK: Guide v2 hooks (GuideAuto)
+
+    /// A follower menu is open or just closed: its clicks are menu hops, not verdicts.
+    var menuBusy: Bool {
+        guard let f = follower else { return false }
+        return f.menuOpen || f.lastMenuActivity.map { Date().timeIntervalSince($0) < Config.guideDebounce } ?? false
+    }
+
+    /// The step after a success, from the predicted plan: no model call.
+    func advanceLocally(_ s: GuideStep, target: GuideTarget, snap fresh: AXSnapshot, finished: GuideStep?) {
+        guard active else { return }
+        if let finished { noteDone(finished) }
+        snap = fresh
+        present(s, target: target)
+    }
+
+    func noteDone(_ s: GuideStep) { progress.append(Guide.describe(s) + " → done") }
+
+    /// The model re-check: PROGRESS plus the LAST STEP line. "Checking…" is shown, never spoken.
+    func recheck(lastStep: String) {
+        guard active else { return }
+        GuideHighlight.pet?.say("Checking…")
+        runStep(userText: nil, lastStep: lastStep)
+    }
+
+    /// A wrong click: speak the fix and point back at the old target. Nothing is sent.
+    func correct(_ say: String, target: GuideTarget) {
+        guard active else { return }
+        log.notice("guide: wrong click; correcting")
+        chat.turns.append(.init(kind: .assistant, text: say))
+        GuideHighlight.show(target, say: say)
+        speakStep(say)
+    }
+
+    /// The 20 s nudge re-says the current step.
+    func nudge(_ say: String) {
+        guard active, follower?.menuOpen != true else { return }
+        GuideHighlight.pet?.say(say)
+        speakStep(say)
+    }
+
+    /// The last step worked: done without another send.
+    func finishLocally(_ s: GuideStep) {
+        noteDone(s)
+        GuideHighlight.show(nil, say: "Done!")
+        finish()
+    }
+
+    /// Re-check limit reached: v1 for the rest of the session.
+    func fallBackToV1() {
+        auto?.stop()
+        auto = nil
+        GuideHighlight.pet?.say("Say next, or tap \(Config.hotkeyDescription), for the next step.")
     }
 
     /// Owner rule: Guide speaks only the step instruction itself; status, why, done and errors are shown silently.

@@ -49,6 +49,9 @@ struct Mode: Sendable {
         why: at most 25 words. expect: at most 15 words. next: at most 3 predicted later steps. \
         last: true when this step finishes the goal. role: menu | button | tab | popup | checkbox | field | link | other. \
         When PROGRESS shows the goal is finished, reply with status done and a short say.
+        When the message has a LAST STEP line, end the object with "check" and "observed": check is ok (it worked; \
+        give the next step), wrong (something else happened; the step is the fix) or not_yet (nothing changed yet; \
+        repeat the same step). observed: at most 12 words on what the screen shows now.
         """,
         followUps: [
             .init(label: "Next", prompt: "next"),
