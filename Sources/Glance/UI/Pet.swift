@@ -59,7 +59,9 @@ final class PetController {
     private let model = PetModel()
     private let window: NSPanel
     private let ring = RingWindow()
-    static let size = NSSize(width: 300, height: 310) // room for the bubble plus the one-line field
+    static let size = NSSize(width: 300, height: 310) // bubble room + sprite + the one-line field strip
+    /// The strip on the far side of Pip from the bubble, for the one-line field.
+    static let fieldRoom: CGFloat = 44
     static let sprite = NSSize(width: 120, height: 90)
     private var home: PetGeometry.Layout?
     private var flight: Task<Void, Never>?
@@ -133,7 +135,7 @@ final class PetController {
         model.pointing = true
         window.orderFrontRegardless()
         apply(PetGeometry.placement(for: rect, screens: NSScreen.screens.map(\.visibleFrame),
-                                    window: Self.size, sprite: Self.sprite, gap: 8), animated: true)
+                                    window: Self.size, sprite: Self.sprite, gap: 8, field: Self.fieldRoom), animated: true)
         if showRing { ring.show(around: rect) } else { ring.hide() }
     }
 
@@ -165,34 +167,32 @@ final class PetController {
         updateVisibility()
     }
 
-    /// Glance was shown: pop up in the centre of the active screen, then fly to its top-right corner.
-    /// With Reduce Motion, appear at the corner directly.
+    /// Glance was shown: Pip appears at home (where it was last dragged, else the centre of the active screen)
+    /// and stays there. No flight, so Reduce Motion needs nothing special.
     func appear() {
-        let mouse = NSEvent.mouseLocation
-        guard let vf = (NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main)?.visibleFrame else { return }
         glanceShown = true
         model.pointing = false
         ring.hide()
-        let target = PetGeometry.home(in: vf, window: Self.size, sprite: Self.sprite)
-        home = target
-        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-            apply(target, animated: false)
-            window.orderFrontRegardless()
-            return
-        }
-        apply(PetGeometry.center(in: vf, window: Self.size, sprite: Self.sprite), animated: false)
+        resetHome()
+        if let home { apply(home, animated: false) }
         window.orderFrontRegardless()
-        flight = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(450)) // a beat in the middle so it's seen
-            guard let self, !Task.isCancelled, self.home == target, !self.model.pointing else { return }
-            self.apply(target, animated: true)
-        }
     }
 
+    /// Home from the remembered drag spot, else the centre of the screen under the mouse.
     private func resetHome() {
-        guard let vf = NSScreen.main?.visibleFrame else { return }
-        home = PetGeometry.home(in: vf, window: Self.size, sprite: Self.sprite)
+        let mouse = NSEvent.mouseLocation
+        guard let vf = (NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main)?.visibleFrame else { return }
+        home = PetGeometry.home(saved: Self.savedSpot(), screens: NSScreen.screens.map(\.visibleFrame), fallback: vf,
+                                window: Self.size, sprite: Self.sprite, field: Self.fieldRoom)
     }
+
+    /// Where the user last dragged Pip (the sprite's Cocoa global origin), kept across launches.
+    nonisolated static let spotKey = "pipSpot"
+    nonisolated static func savedSpot(_ d: UserDefaults = .standard) -> CGPoint? {
+        guard let a = d.array(forKey: spotKey) as? [Double], a.count == 2 else { return nil }
+        return CGPoint(x: a[0], y: a[1])
+    }
+    nonisolated static func saveSpot(_ p: CGPoint, _ d: UserDefaults = .standard) { d.set([Double(p.x), Double(p.y)], forKey: spotKey) }
 
     private func screensChanged() {
         guard let h = home, PetGeometry.isOffScreen(h.spriteRect(Self.sprite), screens: NSScreen.screens.map(\.visibleFrame)) else { return }
@@ -269,11 +269,13 @@ final class PetController {
         }
     }
 
+    /// A drag sets Pip's new home (remembered) and re-fits the bubble and field around it.
     private func dragEnded() {
         if dragStart != nil, !model.pointing {
-            var l = model.layout
-            l.origin = window.frame.origin
-            home = l
+            let o = window.frame.origin
+            Self.saveSpot(CGPoint(x: o.x + model.layout.sprite.x, y: o.y + model.layout.sprite.y))
+            resetHome()
+            if let home { apply(home, animated: false) }
         }
         dragStart = nil
     }
@@ -359,20 +361,21 @@ struct PetView: View {
             } else {
                 let bubble = Self.bubbleText(state: state, said: model.said, reply: reply.map { ($0.id, $0.text) },
                                              spoken: spoken, dismissed: model.dismissed, failed: chat.failed)
-                VStack(alignment: tailRight ? .trailing : .leading, spacing: 6) {
-                    if model.compact && l.bubbleBelow { compactField }
-                    if let bubble {
-                        PetBubbleView(text: bubble, tailOnRight: tailRight,
-                                      moreTitle: GlanceSurface.chatToggleTitle(panelOpen: model.chatOpen),
-                                      onMore: state == .listening || state == .thinking ? nil : onShowMore) {
-                            model.dismissed = reply?.id; model.said = nil; chat.failed = false
-                        }
+                if let bubble {
+                    PetBubbleView(text: bubble, tailOnRight: tailRight,
+                                  moreTitle: GlanceSurface.chatToggleTitle(panelOpen: model.chatOpen),
+                                  onMore: state == .listening || state == .thinking ? nil : onShowMore) {
+                        model.dismissed = reply?.id; model.said = nil; chat.failed = false
                     }
-                    if model.compact && !l.bubbleBelow { compactField }
+                    .frame(width: 260, height: max(0, l.bubbleBelow ? w.height - spriteTop - s.height - 6 : spriteTop - 6),
+                           alignment: Alignment(horizontal: tailRight ? .trailing : .leading, vertical: l.bubbleBelow ? .top : .bottom))
+                    .offset(x: bubbleX, y: l.bubbleBelow ? spriteTop + s.height + 6 : 0)
                 }
-                .frame(width: 260, height: max(0, l.bubbleBelow ? w.height - spriteTop - s.height - 6 : spriteTop - 6),
-                       alignment: Alignment(horizontal: tailRight ? .trailing : .leading, vertical: l.bubbleBelow ? .top : .bottom))
-                .offset(x: bubbleX, y: l.bubbleBelow ? spriteTop + s.height + 6 : 0)
+            }
+            if model.compact && confirm.prompt == nil {
+                // The field sits in the strip on the far side of Pip from the bubble (below Pip unless the bubble flipped).
+                compactField
+                    .offset(x: bubbleX, y: l.bubbleBelow ? max(0, spriteTop - PetController.fieldRoom) + 4 : spriteTop + s.height + 4)
             }
             PipSpriteView(state: state, pointLeft: l.pointLeft)
                 .frame(width: s.width, height: s.height)
