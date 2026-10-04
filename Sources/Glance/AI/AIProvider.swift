@@ -37,30 +37,56 @@ protocol AIProvider: Sendable {
 
 extension AIProvider {
     func stream(system: String, messages: [ChatMessage]) -> AsyncThrowingStream<String, Error> {
-        AsyncThrowingStream { continuation in
-            let task = Task {
-                do {
-                    let request = try makeRequest(system: system, messages: messages)
-                    let (bytes, response) = try await Network.bytes(for: request)
-                    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                    guard status == 200 else {
-                        var body = ""
-                        for try await line in bytes.lines { body += line; if body.count > 1000 { break } }
-                        throw AIError.http(status, body)
-                    }
-                    for try await line in bytes.lines {
-                        guard line.hasPrefix("data:") else { continue }
-                        let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
-                        if payload == "[DONE]" { break }
-                        if let delta = try textDelta(fromEvent: payload) { continuation.yield(delta) }
-                    }
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
+        sseStream(self, system: system, messages: messages)
+    }
+}
+
+/// HTTP + server-sent events, with per-request timings in the log (sizes and times only, never content):
+/// request size, time to HTTP headers, first reasoning event, first text, and how spread out the text events
+/// were (one burst at the end means the server or a proxy buffered the stream).
+func sseStream(_ provider: AIProvider, system: String, messages: [ChatMessage]) -> AsyncThrowingStream<String, Error> {
+    AsyncThrowingStream { continuation in
+        let task = Task {
+            let start = Date()
+            func since(_ d: Date?) -> Double { d.map { $0.timeIntervalSince(start) } ?? -1 }
+            var headers: Date?, firstReasoning: Date?, firstText: Date?, lastText: Date?
+            var reasoningEvents = 0, textEvents = 0
+            var size = 0
+            let images = messages.reduce(0) { $0 + $1.images.count }
+            defer {
+                log.notice("ai: \(provider.name, privacy: .public) request \(size / 1000, privacy: .public) kB, \(images, privacy: .public) image(s); headers \(since(headers), format: .fixed(precision: 2), privacy: .public) s, first reasoning \(since(firstReasoning), format: .fixed(precision: 2), privacy: .public) s (\(reasoningEvents, privacy: .public) events), first text \(since(firstText), format: .fixed(precision: 2), privacy: .public) s, \(textEvents, privacy: .public) text events over \(firstText.map { (lastText ?? $0).timeIntervalSince($0) } ?? 0, format: .fixed(precision: 2), privacy: .public) s, total \(Date().timeIntervalSince(start), format: .fixed(precision: 2), privacy: .public) s")
             }
-            continuation.onTermination = { _ in task.cancel() }
+            do {
+                let request = try provider.makeRequest(system: system, messages: messages)
+                size = request.httpBody?.count ?? 0
+                let (bytes, response) = try await Network.bytes(for: request)
+                headers = Date()
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                guard status == 200 else {
+                    var body = ""
+                    for try await line in bytes.lines { body += line; if body.count > 1000 { break } }
+                    throw AIError.http(status, body)
+                }
+                for try await line in bytes.lines {
+                    guard line.hasPrefix("data:") else { continue }
+                    let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+                    if payload == "[DONE]" { break }
+                    if let delta = try provider.textDelta(fromEvent: payload), !delta.isEmpty {
+                        if firstText == nil { firstText = Date() }
+                        lastText = Date()
+                        textEvents += 1
+                        continuation.yield(delta)
+                    } else if payload.contains("\"reasoning") || payload.contains("thinking") {
+                        if firstReasoning == nil { firstReasoning = Date() }
+                        reasoningEvents += 1
+                    }
+                }
+                continuation.finish()
+            } catch {
+                continuation.finish(throwing: error)
+            }
         }
+        continuation.onTermination = { _ in task.cancel() }
     }
 }
 
@@ -93,8 +119,10 @@ enum Providers {
         case .anthropic:
             return AnthropicProvider(apiKey: key, baseURL: Config.baseURL(for: id), model: Config.model(for: id))
         case .openAICompat:
-            return OpenAICompatProvider(name: preset.name, apiKey: key, baseURL: Config.baseURL(for: id),
-                                        model: Config.model(for: id), supportsImages: Config.supportsImages(for: id))
+            let base = Config.baseURL(for: id), model = Config.model(for: id)
+            return OpenAICompatProvider(name: preset.name, apiKey: key, baseURL: base, model: model,
+                                        supportsImages: Config.supportsImages(for: id),
+                                        reasoningEffort: ReasoningEffort.unsupported(baseURL: base, model: model) ? nil : ReasoningEffort.lowest)
         }
     }
 }

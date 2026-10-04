@@ -79,6 +79,7 @@ enum Phase4Tests {
         check(consentCalls.n == 1 && consent.sent.isEmpty, "send(): a caller's confirm is always awaited; false sends nothing")
 
         localOnly(check)
+        providerSpeed(check)
         speechInventory(check)
         mockBank(check)
         networkGate(check)
@@ -114,6 +115,46 @@ enum Phase4Tests {
         check(PetView.bubbleText(state: .thinking, said: nil, reply: nil, spoken: nil, dismissed: nil) == "Thinking…"
               && PetView.bubbleText(state: .thinking, said: ("x", id), reply: nil, spoken: nil, dismissed: nil) == "Thinking…",
               "speech inventory: no filler beyond Listening… / Thinking…")
+    }
+
+    /// Slow answers (owner report, grok-4.6 on Azure): reasoning_effort low, dropped once a deployment rejects it,
+    /// incremental SSE, a smaller memory budget, and the spoken "Say:" line first.
+    private static func providerSpeed(_ check: (Bool, String) -> Void) {
+        let base = "https://stub.test/openai/v1", model = "grok-test"
+        ReasoningEffort.forget(baseURL: base, model: model)
+        defer { ReasoningEffort.forget(baseURL: base, model: model) }
+        func body(_ p: AIProvider) -> [String: Any] {
+            let r = try? p.makeRequest(system: "s", messages: [ChatMessage(role: .user, text: "q")])
+            return (r?.httpBody).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        }
+        let fresh = OpenAICompatProvider(name: "T", apiKey: "k", baseURL: base, model: model, supportsImages: false,
+                                         reasoningEffort: ReasoningEffort.lowest)
+        check(body(fresh)["reasoning_effort"] as? String == "low", "speed: OpenAI-compatible requests ask for low reasoning effort")
+        check(ReasoningEffort.rejected(status: 400, body: #"{"error":{"message":"Unrecognized request argument supplied: reasoning_effort"}}"#)
+              && !ReasoningEffort.rejected(status: 400, body: "maximum context length exceeded")
+              && !ReasoningEffort.rejected(status: 401, body: "reasoning"), "speed: only a 4xx naming the parameter counts as a rejection")
+
+        // A stub server: 400 when reasoning_effort is sent, else an SSE stream in separate chunks.
+        URLProtocol.registerClass(StubSSE.self)
+        defer { URLProtocol.unregisterClass(StubSSE.self) }
+        StubSSE.requests = 0
+        let text = blocking { () async -> String in
+            var t = ""
+            do { for try await d in fresh.stream(system: "s", messages: [ChatMessage(role: .user, text: "q")]) { t += d } } catch { t = "error: \(error)" }
+            return t
+        }
+        check(text == "Say: Fine.\n\nFull answer.", "speed: rejected reasoning_effort → sent again without it  → \(text ?? "nil")")
+        check(StubSSE.requests == 2 && ReasoningEffort.unsupported(baseURL: base, model: model), "speed: the rejection is remembered for this address and model")
+        let next = OpenAICompatProvider(name: "T", apiKey: "k", baseURL: base, model: model, supportsImages: false,
+                                        reasoningEffort: ReasoningEffort.unsupported(baseURL: base, model: model) ? nil : ReasoningEffort.lowest)
+        check(body(next)["reasoning_effort"] == nil, "speed: later requests skip the parameter (no extra round trip)")
+        let events = blocking { () async -> Int in
+            var n = 0
+            do { for try await _ in next.stream(system: "s", messages: [ChatMessage(role: .user, text: "q")]) { n += 1 } } catch {}
+            return n
+        }
+        check(events == 4, "speed: SSE text arrives event by event, not at the end  → \(events ?? -1) events")
+        check(Mode.explain.system.contains("Start every reply with one line: \"Say: \""), "speed: the model is told to put the Say line first")
     }
 
     /// Scope 3: local-only mode routes AI and voice to this Mac, and the gate refuses everything else.
@@ -245,3 +286,34 @@ private func blocking<T: Sendable>(timeout: Double = 10, _ op: @escaping @Sendab
 }
 
 private final class SendableBox<T>: @unchecked Sendable { var value: T? }
+
+/// Fake OpenAI-compatible endpoint at stub.test for the speed selftest.
+private final class StubSSE: URLProtocol {
+    nonisolated(unsafe) static var requests = 0
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "stub.test" }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        Self.requests += 1
+        var body = request.httpBody ?? Data()
+        if body.isEmpty, let stream = request.httpBodyStream {
+            stream.open(); defer { stream.close() }
+            var buf = [UInt8](repeating: 0, count: 65536)
+            while stream.hasBytesAvailable { let n = stream.read(&buf, maxLength: buf.count); if n <= 0 { break }; body.append(buf, count: n) }
+        }
+        let rejects = String(decoding: body, as: UTF8.self).contains("reasoning_effort")
+        let response = HTTPURLResponse(url: request.url!, statusCode: rejects ? 400 : 200, httpVersion: "HTTP/1.1",
+                                       headerFields: ["Content-Type": rejects ? "application/json" : "text/event-stream"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        if rejects {
+            client?.urlProtocol(self, didLoad: Data(#"{"error":{"message":"Unrecognized request argument supplied: reasoning_effort"}}"#.utf8))
+        } else {
+            for piece in ["Say: ", "Fine.", "\\n\\n", "Full answer."] {
+                let json = #"{"choices":[{"index":0,"delta":{"content":"\#(piece)"}}]}"#
+                client?.urlProtocol(self, didLoad: Data("data: \(json)\n\n".utf8))
+            }
+            client?.urlProtocol(self, didLoad: Data("data: [DONE]\n\n".utf8))
+        }
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}

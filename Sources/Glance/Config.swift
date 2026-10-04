@@ -57,7 +57,7 @@ enum Config {
     static let thumbnailMaxDimension = 320
     /// Most characters of recent activity sent with a question (activity log + page text). About 15k tokens:
     /// fits DeepSeek's context with room to spare. Over budget, the oldest pages shrink to their key lines.
-    static var memoryContextMaxChars: Int { value("memoryContextMaxChars", default: 60_000) }
+    static var memoryContextMaxChars: Int { value("memoryContextMaxChars", default: 20_000) }
     /// Browsers: private-window and URL checks apply to these.
     static let browsers: Set<String> = [
         "com.apple.Safari", "com.apple.SafariTechnologyPreview", "com.google.Chrome", "com.microsoft.edgemac",

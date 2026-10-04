@@ -327,6 +327,7 @@ final class ChatModel: ObservableObject {
         busy = true
         turns.append(Turn(kind: .user, text: shown))
         answering = Task {
+            let began = Date() // log only: reading the selection and building memory count as thinking too
             defer { if !Task.isCancelled { busy = false } }
             let provider: AIProvider
             do { provider = try Providers.current() } catch {
@@ -398,9 +399,21 @@ final class ChatModel: ObservableObject {
             }
             do {
                 var raw = ""
+                // Log only: how long "Thinking…" lasted, and when the spoken "Say:" sentence was complete.
+                let asked = Date()
+                var firstToken = false, sayDone = false
+                defer { log.notice("answer: total \(Date().timeIntervalSince(asked), format: .fixed(precision: 2), privacy: .public) s, \(raw.count, privacy: .public) characters") }
                 for try await delta in answer {
                     guard !Task.isCancelled else { return } // turns may already belong to a new selection
                     raw += delta
+                    if !firstToken {
+                        firstToken = true
+                        log.notice("answer: thinking \(Date().timeIntervalSince(began), format: .fixed(precision: 2), privacy: .public) s until the first word (\(asked.timeIntervalSince(began), format: .fixed(precision: 2), privacy: .public) s reading the screen and memory)")
+                    }
+                    if !sayDone, case .summary(_, true, _) = Voice.splitSpoken(raw) {
+                        sayDone = true
+                        log.notice("answer: Say line complete at \(Date().timeIntervalSince(asked), format: .fixed(precision: 2), privacy: .public) s")
+                    }
                     turns[index].text = speaker.answer(raw)
                     answerRaw = (turns[index].id, raw)
                 }

@@ -339,7 +339,7 @@ enum SelfTest {
                   "budget: every page keeps its title and key lines")
             check(!cut.text.contains("filler line 1 for page 0\n") && cut.text.contains("filler line 1 for page 5"),
                   "budget: the oldest pages are trimmed first, the newest keep their text")
-            check(Config.memoryContextMaxChars == 60_000, "budget: default 60k characters")
+            check(Config.memoryContextMaxChars == 20_000, "budget: default 20k characters (60k made slow providers take 30-60 s)")
             let tb = Date()
             let timed = ContextPacket.memoryOnly().withMemory(MemoryContext.build(rows: big, now: Date(timeIntervalSince1970: 600))!)
             print(String(format: "      memory context: build + redact %d characters in %.0f ms (once per question)",
