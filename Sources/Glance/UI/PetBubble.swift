@@ -9,6 +9,7 @@ struct PetBubbleView: View {
     var onSend: (() -> Void)? = nil
     var onCancel: (() -> Void)? = nil
     /// "Show more": opens the full chat panel.
+    var moreTitle = "Show more"
     var onMore: (() -> Void)? = nil
     let onClose: () -> Void
 
@@ -61,7 +62,7 @@ struct PetBubbleView: View {
                 if let onMore {
                     HStack {
                         Spacer()
-                        Button("Show more", action: onMore).buttonStyle(.link).font(.system(size: 11, weight: .semibold))
+                        Button(moreTitle, action: onMore).buttonStyle(.link).font(.system(size: 11, weight: .semibold))
                     }
                 }
             }

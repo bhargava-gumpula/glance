@@ -104,6 +104,20 @@ enum Phase6Tests {
         check(PetView.bubbleText(state: .idle, said: nil, reply: nil, spoken: nil, dismissed: nil, failed: true) == PetView.failedText,
               "pip ui: an error shows 'Something went wrong' in the bubble")
 
+        // 7a. Hide chat: labels and Esc
+        let L = GlanceSurface.chatToggleTitle
+        check(L(false, false) == "Show more" && L(true, false) == "Hide chat", "hide chat: bubble link reads Show more / Hide chat")
+        check(L(false, true) == "Show Chat" && L(true, true) == "Hide Chat", "hide chat: menu item reads Show Chat / Hide Chat")
+        var esc = GlanceSurface()
+        _ = esc.tap(guideActive: false)
+        esc.showMore()
+        esc.hideChat()
+        check(!esc.panel && esc.pip && esc.compact, "hide chat: Esc in the panel hides only the chat; Pip and its field stay")
+        esc.hideChat()
+        check(!esc.panel && esc.pip, "hide chat: Esc with the chat closed changes nothing")
+        check(ChatPanel.escHidesChat(keyCode: 53, confirmOpen: false) && !ChatPanel.escHidesChat(keyCode: 53, confirmOpen: true)
+              && !ChatPanel.escHidesChat(keyCode: 36, confirmOpen: false), "hide chat: Esc hides the chat, except while Send/Cancel is open")
+
         // 7b. Selection highlight: cleared when its answer is done, on a new question, hide or Stop; never Guide's ring
         let C = ChatModel.clearsHighlight
         check(!C(.answerSettled(busy: false, speaking: false), false, false), "highlight: kept until a question is asked")

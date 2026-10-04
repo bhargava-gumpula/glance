@@ -5,7 +5,7 @@ import SwiftUI
 /// Floating panel that sits above every app without stealing focus from it.
 @MainActor
 final class PanelController {
-    private let panel: NSPanel
+    private let panel: ChatPanel
     private let chat = ChatModel()
     private let pointTool = PointTool()
     let pet: PetController
@@ -19,7 +19,7 @@ final class PanelController {
     }
 
     init() {
-        panel = NSPanel(
+        panel = ChatPanel(
             contentRect: NSRect(x: 0, y: 0, width: 420, height: 520),
             styleMask: [.nonactivatingPanel, .titled, .resizable, .fullSizeContentView],
             backing: .buffered, defer: true
@@ -43,6 +43,7 @@ final class PanelController {
         pointTool.onCancel = { [weak self] in self?.focusTyping() }
         pet.onTap = { [weak self] in self?.petTapped() }
         pet.onShowMore = { [weak self] in self?.showMore() }
+        panel.onEsc = { [weak self] in self?.hideChat() }
         pet.onQuiet = { [weak self] in self?.answerMaybeDone() }
         chat.onShowMore = { [weak self] in self?.showMore() }
         chat.onClearHighlight = { [weak self] in self?.clearSelectionHighlight() }
@@ -69,6 +70,7 @@ final class PanelController {
 
     private func hide() {
         surface.hide()
+        pet.chatOpen = false
         panel.orderOut(nil)
         clearSelectionHighlight()
         pet.hideCompact()
@@ -79,7 +81,23 @@ final class PanelController {
     /// Pip's bubble "Show more" (or the panel's ✕): the full chat with the complete answer and history. Pip stays.
     func showMore() {
         surface.showMore()
-        if surface.panel { showPanel(); pet.hideCompact() } else { panel.orderOut(nil); if surface.compact { pet.showCompact(focus: false) } }
+        if surface.panel { pet.appear(); showPanel(); pet.hideCompact() } else { closePanel() }
+        pet.chatOpen = surface.panel
+    }
+
+    /// Esc in the panel, or the menu's Hide Chat: the panel goes; Pip and its answer bubble stay.
+    func hideChat() {
+        guard surface.panel else { return }
+        surface.hideChat()
+        closePanel()
+        pet.chatOpen = false
+    }
+
+    var chatOpen: Bool { surface.panel }
+
+    private func closePanel() {
+        panel.orderOut(nil)
+        if surface.compact { pet.showCompact(focus: false) }
     }
 
     private func showPip(focus: Bool) {
@@ -155,7 +173,7 @@ final class PanelController {
 
     /// Menu "Show Glance": the full panel (or hide everything).
     func toggle() {
-        if surface.menuShow() { pet.appear(); showPanel(); focusInput() } else { hide() }
+        if surface.menuShow() { pet.appear(); showPanel(); focusInput(); pet.chatOpen = true } else { hide() }
     }
 
     private func showPanel() {
@@ -520,8 +538,8 @@ struct PanelView: View {
                 .help(chat.muted ? "Answers are text only. Click to read them aloud" : "Answers are read aloud. Click to mute")
                 Button { chat.point() } label: { Label("Point", systemImage: "viewfinder") }
                     .help("Drag a box over something on screen")
-                Button { chat.onShowMore?() } label: { Image(systemName: "xmark") }
-                    .help("Close the chat (Pip stays)")
+                Button { chat.onShowMore?() } label: { Label(GlanceSurface.chatToggleTitle(panelOpen: true), systemImage: "xmark") }
+                    .help("Hide the chat; Pip and its answer stay (Esc)")
             }
             if chat.listening {
                 Label("Listening… release \(Config.hotkeyDescription) to ask", systemImage: "mic.fill")
@@ -667,10 +685,23 @@ struct GlanceSurface: Equatable {
         return .showToType
     }
 
-    /// Show more / ✕ toggle the panel; Pip stays.
+    /// Show more / Hide chat toggle the panel; Pip stays.
     mutating func showMore() {
         panel.toggle()
         pip = true
+    }
+
+    /// Esc in the panel or Hide Chat: only the panel goes.
+    mutating func hideChat() { panel = false }
+
+    /// The chat toggle's label: Pip's bubble link and the panel button, or (`menu`) the menu-bar item.
+    static func chatToggleTitle(panelOpen: Bool, menu: Bool = false) -> String {
+        switch (panelOpen, menu) {
+        case (true, false): return "Hide chat"
+        case (false, false): return "Show more"
+        case (true, true): return "Hide Chat"
+        case (false, true): return "Show Chat"
+        }
     }
 
     /// Menu Show Glance: true = show the panel, false = hide everything.
@@ -691,4 +722,20 @@ struct GlanceSurface: Equatable {
 
     mutating func hold() { pip = true }
     mutating func hide() { self = GlanceSurface() }
+}
+
+/// The chat panel. Esc hides the chat, not Glance, even from inside its text field (whose editor would
+/// otherwise take Esc); while a Send/Cancel question is open, Esc still means Cancel.
+final class ChatPanel: NSPanel {
+    var onEsc: (() -> Void)?
+
+    nonisolated static func escHidesChat(keyCode: UInt16, confirmOpen: Bool) -> Bool { keyCode == 53 && !confirmOpen }
+
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown, Self.escHidesChat(keyCode: event.keyCode, confirmOpen: SendConfirm.shared.prompt != nil) {
+            onEsc?()
+            return
+        }
+        super.sendEvent(event)
+    }
 }

@@ -29,6 +29,7 @@ final class PetModel: ObservableObject {
     /// Pip's one-line field (⌥Space tap); `focusTick` bumps to put the cursor in it.
     @Published var compact = false
     @Published var focusTick = 0
+    @Published var chatOpen = false
 }
 
 /// Pip's window can take the keyboard for its one-line field without activating Glance.
@@ -42,6 +43,11 @@ final class PetController {
     var onTap: (() -> Void)?
     /// The bubble's "Show more": the full chat panel.
     var onShowMore: (() -> Void)?
+    /// The chat panel is open: the bubble's link reads "Hide chat".
+    var chatOpen: Bool {
+        get { model.chatOpen }
+        set { model.chatOpen = newValue }
+    }
     /// The spoken line ended (or was cut short).
     var onQuiet: (() -> Void)?
     var isSpeaking: Bool { model.talkUntil.map { $0 > Date() } ?? false }
@@ -357,6 +363,7 @@ struct PetView: View {
                     if model.compact && l.bubbleBelow { compactField }
                     if let bubble {
                         PetBubbleView(text: bubble, tailOnRight: tailRight,
+                                      moreTitle: GlanceSurface.chatToggleTitle(panelOpen: model.chatOpen),
                                       onMore: state == .listening || state == .thinking ? nil : onShowMore) {
                             model.dismissed = reply?.id; model.said = nil; chat.failed = false
                         }

@@ -2,7 +2,7 @@ import AppKit
 
 @main
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var hotkey: Hotkey!
     private let panel = PanelController()
@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let memory = MemoryRecorder()
     private let memoryStatus = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let pauseItem = NSMenuItem(title: "Pause Memory", action: #selector(togglePause), keyEquivalent: "")
+    private let chatItem = NSMenuItem(title: "Show Chat", action: #selector(toggleChat), keyEquivalent: "")
     private let localOnlyItem = NSMenuItem(title: "Local Only", action: #selector(toggleLocalOnly), keyEquivalent: "")
     private var localOnlyWatch: NSObjectProtocol?
 
@@ -31,6 +32,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let menu = NSMenu()
         menu.addItem(withTitle: "Show Glance (\(Config.hotkeyDescription))", action: #selector(togglePanel), keyEquivalent: "")
+        menu.addItem(chatItem)
+        menu.delegate = self
         menu.addItem(.separator())
         memoryStatus.isEnabled = false
         menu.addItem(memoryStatus)
@@ -73,6 +76,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func togglePanel() { panel.toggle() }
+    @objc private func toggleChat() { if panel.chatOpen { panel.hideChat() } else { panel.showMore() } }
+
+    /// "Hide Chat" while the panel is open, "Show Chat" otherwise.
+    func menuNeedsUpdate(_ menu: NSMenu) { chatItem.title = GlanceSurface.chatToggleTitle(panelOpen: panel.chatOpen, menu: true) }
     @objc private func showOnboarding() { onboarding.show() }
     @objc private func showSettings() { settings.show() }
     @objc private func togglePause() { memory.paused.toggle() }
