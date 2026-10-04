@@ -29,6 +29,7 @@ final class PanelController {
         panel.hidesOnDeactivate = false
         panel.contentView = NSHostingView(rootView: PanelView(chat: chat))
         pet = PetController(chat: chat)
+        chat.onSay = { [weak self] in self?.pet.say($0) } // Phase 4: Pip shows the fixed "I hid N" line
         pet.show()
 
         chat.onPoint = { [weak self] in self?.pointTool.start() }
@@ -40,7 +41,6 @@ final class PanelController {
         }
         pointTool.onCancel = { [weak self] in self?.focusInput() }
         pet.onTap = { [weak self] in self?.petTapped() }
-        chat.onSay = { [weak self] in self?.pet.say($0) }
     }
 
     /// Clicking Pip opens the chat to message it (or hides the chat).
