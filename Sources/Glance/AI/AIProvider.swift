@@ -39,7 +39,7 @@ extension AIProvider {
             let task = Task {
                 do {
                     let request = try makeRequest(system: system, messages: messages)
-                    let (bytes, response) = try await URLSession.shared.bytes(for: request)
+                    let (bytes, response) = try await Network.bytes(for: request)
                     let status = (response as? HTTPURLResponse)?.statusCode ?? 0
                     guard status == 200 else {
                         var body = ""

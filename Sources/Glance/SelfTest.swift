@@ -114,9 +114,9 @@ enum SelfTest {
             ("brokerage account", "Brokerage account number: 5RT-28473", "[ID]"),
             ("bank account", "Account number 12345678", "[ID]"),
             ("sort code", "Sort code 93-11-52", "[ID]"),
-            ("CVV", "CVV: 123", "[ID]"),
+            ("CVV", "CVV: 123", "[PIN]"),
             ("2FA code", "Your verification code is 482913", "[ID]"),
-            ("password", "Password: hunter2!", "[SECRET]"),
+            ("password", "Password: hunter2!", "[PASSWORD]"),
             ("username label", "Username: aoife_k", "[USERNAME]"),
             ("signed in as", "Signed in as aoifek", "[USERNAME]"),
             ("handle", "Follow @aoife_kelly for more", "[USERNAME]"),
@@ -175,7 +175,7 @@ enum SelfTest {
             check(red(card).hasPrefix("[CARD]") && !red(card).contains("4242 4242") && !red(card).contains("1111 1111"), "A5 card before expiry/CVC: \(red(card))")
         }
         let pwd = Redactor.redactLines(["Email", "aoife@example.ie", "Password", "•••••••••••", "Sign in"])
-        check(pwd[3].hits > 0 && pwd[3].text == "[SECRET]" && pwd[4].hits == 0, "A6 value under a bare Password label")
+        check(pwd[3].hits > 0 && pwd[3].text == "[PASSWORD]" && pwd[4].hits == 0, "A6 value under a bare Password label")
         for otp in ["Your code is 482913", "482913 is your verification code", "G-482913 is your Google verification code.",
                     "Enter code 482913", "Your WhatsApp code: 123-456"] {
             check(!red(otp).contains("482913") && !red(otp).contains("123-456"), "A7 2FA: \(otp) → \(red(otp))")
@@ -549,6 +549,8 @@ enum SelfTest {
             RunLoop.main.run(until: Date().addingTimeInterval(0.02)) // first worker is mid-speech
             s.begin(t); _ = s.answer("Say: Second answer.\n", final: true)
         }.last == "Second answer.", "speaker: a cancelled worker doesn't silence the next answer")
+
+        Phase4Tests.run(check)
 
         print(failures == 0 ? "selftest: all passed" : "selftest: \(failures) failed")
         exit(failures == 0 ? 0 : 1)
