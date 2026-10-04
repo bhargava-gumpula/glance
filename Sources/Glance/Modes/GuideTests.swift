@@ -106,6 +106,22 @@ enum GuideTests {
         check(sentText.hasPrefix("GOAL: Mail [EMAIL]") && sentText.contains("[EMAIL]") && !sentText.contains("a@b.ie"),
               "guide: consent Send → redacted packet and goal sent")
 
+        // send() clamp: a screen packet is never sent unredacted, even when reveal is asked for.
+        var screenPacket = ContextPacket(appName: "Pages", redacted: .init(selectionImage: Data([0xFF]), selectedText: "Card [CARD]"),
+                                         raw: .init(selectionImage: Data([0xFF]), selectedText: "Card 4242 4242 4242 4242"), redactions: 1)
+        screenPacket.isScreen = true
+        let clampRecorder = GuideRecordingProvider()
+        let clampDone = ResultFlag()
+        MainActor.assumeIsolated {
+            let stream = ContextPacket.send(screenPacket, history: [], question: "Don't redact", reveal: true, announce: true,
+                                            mode: .guide, provider: clampRecorder, showPreview: { _ in }, confirm: { _ in true })
+            Task { _ = try? await stream.reduce("", +); clampDone.done = true }
+        }
+        let clampDeadline = Date().addingTimeInterval(5)
+        while !clampDone.done && Date() < clampDeadline { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+        check(clampRecorder.lastText.contains("[CARD]") && !clampRecorder.lastText.contains("4242"),
+              "guide: send() clamp, reveal on a screen packet still sends redacted text")
+
         // 8. Coordinates
         check(PetGeometry.cocoaRect(fromAX: CGRect(x: 100, y: 50, width: 200, height: 40), primaryHeight: 900)
               == CGRect(x: 100, y: 810, width: 200, height: 40), "guide: AX → Cocoa")

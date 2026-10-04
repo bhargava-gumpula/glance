@@ -285,6 +285,7 @@ final class ChatModel: ObservableObject {
     func point() { onPoint?() }
 
     func stop() {
+        guide.stop()
         speaker.stop()
         answering?.cancel()
         answering = nil
@@ -293,9 +294,10 @@ final class ChatModel: ObservableObject {
 
     /// `spokenAt`: when the user released ⌥Space, for the release → first spoken word log.
     private func ask(_ question: String, shown: String, spokenAt: Date? = nil) {
-        if busy { stop() } // a spoken question replaces the one being answered
-        // Guide first, so no other mode can take over a "show me how" line.
-        if Guide.isRequest(question) || guide.active || mode.name == Mode.guide.name {
+        // Guide first, so no other mode can take over a "show me how" line. Inside a session, Guide replaces its own step.
+        let toGuide = Guide.isRequest(question) || guide.active || mode.name == Mode.guide.name
+        if busy && !(toGuide && guide.active) { stop() } // a spoken question replaces the one being answered
+        if toGuide {
             turns.append(Turn(kind: .user, text: shown))
             _ = guide.handle(question)
             return

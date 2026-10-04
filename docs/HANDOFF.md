@@ -141,6 +141,27 @@ Built so far:
 ## Tested build (owner-confirmed, 2026-10-03 18:15)
 `main` = the combined build: Phase 2 voice, Phase 3 memory (memory on every question, the activity log, full recent context), Pip, and audit fixes A1–A19. 253 selftests pass. The owner confirmed "this version works well". Claude via Azure is pending the deployment's provisioningState = Succeeded.
 
+## Phase 5 (Guide v1, branch `phase5`)
+- "Show me how to …" (also "how do I", "walk me through", "guide me", "help me") starts Guide, checked before any other mode in `ChatModel.ask`. Target = front app, or the last non-Glance app when the panel is in front. Refused for excluded apps and secure input.
+- Each step: `AXSnapshot.take` (menus → `MenuIndex`, depth 3, cap 400, Apple menu and `Config.guideSkippedMenus` dropped; focused window + sheets → up to 150 enabled on-screen controls; no AXValue, no secure fields; 0.25 s AX timeout, off the main thread) in parallel with `ContextPacket.captureScreen` (whole screen under the mouse, without Glance/excluded apps, OCR with word boxes, redacted, blacked out). The model sees M#/A#/O# lists (labels redacted in `withGuide`) and the image only if the provider takes images. Ids → elements/boxes stay on the Mac.
+- Reply = one JSON step (`Mode.guide`). Pip moves as soon as `"ref":"X1"` streams in; `Locator.resolve` maps menu_path / M / A / O / label (never a guess) and `GuideHighlight.show` is the only code that touches Pip.
+- Menu paths are followed locally by `MenuFollower` (AXMenuOpened/Closed; 400 ms grace when sliding across the bar; "That's Edit. Close it and click File"; after the last item it waits 2 s for a sheet/window). No model call per hop.
+- next / why / skip / stop by voice, typing, the follow-up buttons, or a ⌥Space tap (= next during a session). Stop button ends the session. 90 s idle → Pip goes home, "next" resumes.
+- Consent: Phase 4's `SendConfirm` (Send/Cancel) via `send(confirm:)`, once per session; it holds for the same app, ≤ the approved number of hidden items, 20 sends, 10 min. Cancel → "Nothing left your Mac." `isScreen` stops any reveal.
+- Never clicks: `scripts/selftest.sh` fails on `AXUIElementPerformAction|kAXPressAction|CGEventPost|.post(tap`.
+- Selftest: 46 Guide checks (`Modes/GuideTests.swift`). In this shell the 3 OCR checks fail with the known `CRImageReaderError 1` warm-up flake; main's build fails the same way here.
+
+### Phase 5 check (owner; needs `./scripts/build-app.sh` from `~/Projects/glance-phase5`)
+- [ ] Hour-0 pre-flight (Pages): the ring shows above the open File menu; `AXMenuOpened` fires for the Export To submenu (Pip moves to PDF…); the real labels match (Export To › PDF…, Next…, Export/Save); the consent card shows.
+- [ ] Pages: "Show me how to export this as a PDF" → Send → Pip at File → open File: Pip moves to Export To, then PDF… with no "next" → Next… and Export via tap or "next" → Done, Pip goes home. 3 times in a row.
+- [ ] TextEdit once (File › Export as PDF… › Save). Once with Cancel (nothing sent). Once on DeepSeek.
+
+### Phase 5 not done / limits
+- Phase 6 items (auto re-check, GuideWatcher, verdict, `next[]` local advance at runtime, 20 s nudge) are not built; `Config.guideAutoRecheck` is unused.
+- No global Esc; use Stop / "stop". "Start at hop i+1 when path[0..i] is already open" is not implemented (Pip starts at path[0]).
+- The Window menu is skipped entirely (its document list); Minimize/Zoom can't be guided.
+- If `AXMenuOpened` doesn't fire for submenus in Pages, add the 150 ms frame poll from the brief.
+
 ## Notes
 - Phase 3 (memory) background, root causes and open checks: [docs/notes/PHASE3-NOTES.md](notes/PHASE3-NOTES.md)
 - Phase 2 (voice) architecture, decisions, ElevenLabs facts, audit A1–A12 and open items: [docs/notes/PHASE2-NOTES.md](notes/PHASE2-NOTES.md)

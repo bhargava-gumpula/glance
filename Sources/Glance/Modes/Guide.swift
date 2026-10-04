@@ -255,11 +255,11 @@ enum GuideHighlight {
     static func goHome() { pet?.goHome() }
 }
 
-/// Full-screen consent. One function so Phase 4's shared Send/Cancel step can replace it.
+/// Full-screen consent, through Phase 4's shared Send/Cancel step (the selftest swaps in a fake).
 @MainActor
 enum GuideConsent {
     /// Shows the card and waits; true = Send.
-    static var ask: (String) async -> Bool = { _ in false }
+    static var ask: (String) async -> Bool = { await SendConfirm.shared.ask($0) }
 }
 
 /// One Guide conversation: a goal, the steps so far, and consent for this app.
@@ -352,6 +352,7 @@ final class GuideSession {
         follower?.stop()
         follower = nil
         speaker.stop()
+        chat.busy = false
         goal = nil
         step = nil
         if chat.mode.name == Mode.guide.name { chat.mode = .explain }
@@ -534,25 +535,20 @@ enum GuideSend {
     static func send(_ packet: ContextPacket, question: String, provider: AIProvider, needsConsent: Bool,
                      preview: @escaping (String, NSImage?) -> Void,
                      consented: @escaping (Bool) -> Void) -> AsyncThrowingStream<String, Error> {
+        var packet = packet
+        packet.isScreen = true // send() then never reveals unredacted text
         let names = packet.guideBlock.map { $0.split(separator: "\n").filter { $0.first == "M" || $0.first == "A" }.count } ?? 0
         let what = provider.supportsImages ? "image + \(packet.lines.count) lines + \(names) control names"
             : "text only (\(packet.lines.count) lines + \(names) control names); the image stays on this Mac"
         let card = "Guide will send your whole screen (redacted) to \(provider.name): \(what). Hid \(packet.redactions)."
-        // ponytail: consent is awaited here until Phase 4's send(confirm:) lands; then this becomes the confirm closure.
-        return AsyncThrowingStream { cont in
-            let task = Task { @MainActor in
-                if needsConsent {
-                    let ok = await GuideConsent.ask(card)
-                    consented(ok)
-                    guard ok, !Task.isCancelled else { cont.finish(); return }
-                }
-                let stream = ContextPacket.send(packet, history: [], question: question, reveal: false, announce: true,
-                                                mode: .guide, provider: provider) { p in
-                    preview(card, p.image)
-                }
-                do { for try await d in stream { cont.yield(d) }; cont.finish() } catch { cont.finish(throwing: error) }
-            }
-            cont.onTermination = { _ in task.cancel() }
+        @MainActor func ask(_ p: ContextPacket.Preview) async -> Bool {
+            let ok = await GuideConsent.ask(card + (p.confirmPrompt.map { " " + $0 } ?? " Send?"))
+            consented(ok)
+            return ok
         }
+        // Every send still adds a non-blocking preview row.
+        return ContextPacket.send(packet, history: [], question: question, reveal: false, announce: true,
+                                  mode: .guide, provider: provider, showPreview: { p in preview(card, p.image) },
+                                  confirm: needsConsent ? ask : nil)
     }
 }
