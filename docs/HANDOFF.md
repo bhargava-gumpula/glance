@@ -232,6 +232,7 @@ Built so far:
 - **Hide chat** (owner request): while the panel is open, Pip's bubble link reads "Hide chat"; the panel header has a labelled "Hide chat" button; the menu has "Show Chat"/"Hide Chat" (`GlanceSurface.chatToggleTitle`). Esc in the panel (even in its text field) hides only the chat, unless Send/Cancel is open (`ChatPanel.escHidesChat`); it never stops an active Guide session (`Guide.escIsForChat`). Pip and its answer bubble stay. 6 selftests.
 
 ## Notes
+- Presentation script (3 min timed, model-wait fillers, 60 s / 30 s versions, Q&A, slides, rubric map, checklist, fallbacks): [docs/SCRIPT.md](SCRIPT.md)
 - UI (Pip and the chat panel) architecture, Guide API, decisions, audit A13–A16 and gaps: [docs/notes/UI-NOTES.md](notes/UI-NOTES.md)
 - Phase 3 (memory) background, root causes and open checks: [docs/notes/PHASE3-NOTES.md](notes/PHASE3-NOTES.md)
 - Phase 2 (voice) architecture, decisions, ElevenLabs facts, audit A1–A12 and open items: [docs/notes/PHASE2-NOTES.md](notes/PHASE2-NOTES.md)
