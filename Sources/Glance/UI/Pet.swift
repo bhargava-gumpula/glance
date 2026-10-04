@@ -305,7 +305,7 @@ struct PetView: View {
                            alignment: Alignment(horizontal: tailRight ? .trailing : .leading, vertical: l.bubbleBelow ? .top : .bottom))
                     .offset(x: bubbleX, y: l.bubbleBelow ? spriteTop + s.height + 6 : 0)
             } else if let bubble = Self.bubbleText(state: state, said: model.said,
-                                            reply: reply.map { ($0.id, $0.kind == .notice ? Problem.classify($0.text).bubble : $0.text) }, spoken: spoken, dismissed: model.dismissed) {
+                                            reply: reply.map { ($0.id, $0.text) }, spoken: spoken, dismissed: model.dismissed) {
                 PetBubbleView(text: bubble, tailOnRight: tailRight) { model.dismissed = reply?.id; model.said = nil }
                     .frame(width: 260, height: max(0, l.bubbleBelow ? w.height - spriteTop - s.height - 6 : spriteTop - 6),
                            alignment: Alignment(horizontal: tailRight ? .trailing : .leading, vertical: l.bubbleBelow ? .top : .bottom))

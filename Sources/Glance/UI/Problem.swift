@@ -14,8 +14,6 @@ struct Problem: Equatable {
     var action: Action? = nil
     var detail: String? = nil
 
-    /// What Pip says in its bubble: short, no raw provider text.
-    var bubble: String { hint.isEmpty ? title : "\(title). \(hint)" }
 
     /// Classifies a notice turn's text.
     static func classify(_ raw: String) -> Problem {
