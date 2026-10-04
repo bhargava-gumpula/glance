@@ -148,6 +148,32 @@ enum GuideTests {
         check(Guide.isRequest("Show me how to export this as a PDF") && Guide.isRequest("how do I print this?")
               && !Guide.isRequest("How's this different from the earlier ones?") && !Guide.isRequest("Explain this to me"),
               "guide: isRequest")
+        // Real transcripts: fillers first, punctuation anywhere, the request mid-sentence.
+        let guideYes = [
+            "Show me how to export this as a PDF.", "Okay, so show me how to export this as a PDF",
+            "Hey Glance, can you show me how to export this as a PDF?", "Can you show me how to save this as a PDF",
+            "Could you please walk me through exporting this?", "So, um, how do I export this as a PDF?",
+            "How can I turn this into a PDF?", "I don't know how to export this to PDF.", "What's the way to print this?",
+            "Help me export this as a PDF", "Can you help me save this document?", "Guide me through sharing this file.",
+            "Where do I click to export?", "Where's the export button?", "Where is the share menu?",
+            "Teach me how to make a PDF", "What do I click to save it?", "Which button exports it?",
+            "Steps to export a PDF in Pages", "How do you export a PDF in Pages?", "OK. How would I add a page number?",
+            "Pip, take me through printing this",
+        ]
+        let guideNo = [
+            "How's this different from the earlier ones?", "How is this different from the MacBook?", "Explain this to me",
+            "What is unified memory?", "What does this mean for me?", "Is 16 GB enough for college?", "Can you read this page?",
+            "How much does it cost?", "How many cores does it have?", "Help me understand this spec",
+            "How do I know if 16 GB is enough?", "How do I compare these laptops?", "Can you explain how this works?",
+            "How do you pronounce this?", "Explain how to read this chart", "What's the best laptop for me?",
+            "How does this compare to the ThinkPad?", "Which one should I buy?",
+        ]
+        let yesMiss = guideYes.filter { !Guide.isRequest($0) }, noHit = guideNo.filter { Guide.isRequest($0) }
+        check(yesMiss.isEmpty, "guide: \(guideYes.count) Guide phrasings start Guide" + (yesMiss.isEmpty ? "" : " — missed: \(yesMiss)"))
+        check(noHit.isEmpty, "guide: \(guideNo.count) Explain questions stay Explain" + (noHit.isEmpty ? "" : " — wrongly Guide: \(noHit)"))
+        check(Guide.normalizeRequest("Okay, so, hey Glance — can you please show me how?") == "show me how", "guide: fillers and punctuation stripped")
+        check(Guide.intent("Hey Glance, show me how to export") == "show me how" && Guide.intent("What is this?") == nil,
+              "guide: intent names the matched rule")
         check(Guide.command("Next.") == .next && Guide.command("why?") == .why && Guide.command("never mind") == .stop
               && Guide.command("skip") == .skip && Guide.command("next to the button") == nil, "guide: local commands")
 
