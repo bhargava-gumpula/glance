@@ -1,5 +1,3 @@
-> **On hold:** don't start this until the owner opens Phase 5.
-
 # Task: Glance Phase 5 + 6 (Guide)
 
 Winner: **Design 1, AX-first**, with a total of **75** (38 + 37). Design 2 (OCR-first) totals **61** (28 + 33) and design 3 (vision-box) totals **53** (26 + 27). This brief keeps design 1's local menu hops and id-based contract and adds the best runner-up ideas: the predicted `next[]` plan (design 2/3), `reveal` and consent enforced inside `send()` (design 2), the brace scanner (design 2), word boxes (design 2), the kill switch (design 2), send-what-you-previewed (design 3) and `avoid(rect)` (design 3).
@@ -202,3 +200,13 @@ SendMessage to "Orchastrator" with:
 - the selftest output and the Phase 5 and Phase 6 gate results (owner-run items marked pending);
 - the hour-0 pre-flight results;
 - open issues: phase3 integration, the Pet.swift line-180 change for the ui chat, label mismatches, and anything unverified.
+
+## Coordination with Phase 4 (running in parallel)
+- **Phase 4 owns:** `ContextPacket.send` (it's adding a reusable Send/Cancel confirm step), `Network.swift` (every request goes through it), the providers and Voice networking, Settings, the menu.
+- **Reuse, don't build your own:**
+  - **Consent:** Guide's full-screen consent should **reuse Phase 4's confirm API**. Ask the "Phase 4" chat for its signature; until it exists, put your consent behind one small function.
+  - **Network:** don't add raw URLSession calls. Use the provider through `ContextPacket.send`.
+- **Shared:** `Panel.swift` and `SelfTest.swift`. Make small, additive edits only. Message the "Phase 4" chat about any change to a shared file or API.
+- **Pip:** Pip's API is already on main (`pet.point(at:)`, `point(atAX:)`, `point(atVision:in:)`, `say`, `goHome`), so you don't need the wrapper.
+- **Base branch:** branch `phase5` from current `main` in your own worktree: `git -C ~/Projects/glance worktree add ../glance-phase5 -b phase5`.
+- Never merge into `main`; the Orchastrator merges. Report to **"Orchastrator"**.
