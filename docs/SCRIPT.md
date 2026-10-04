@@ -35,7 +35,7 @@ One presenter (P) and one driver (D). It also works with one person doing both: 
 | 0:35 | "She never told Glance any of this. It's been keeping a short memory of her screen, on her Mac, for the last ten minutes." | Tab to page 3 (MacBook Air specs). |
 | **0:42** | "So she just asks." | **Hold ⌥Space**: *"Which of the laptops I looked at fits my budget?"* Release. |
 | 0:47 | *Filler A* (section 2): "While it thinks: notice she didn't select anything or paste anything. Glance is reading what she looked at across Safari and Notes, and it's already hidden anything sensitive before it goes to the model." | Wait. Pip shows "Thinking…". |
-| ~1:05 | (Let the spoken answer play: it names the laptops and the €1,200 / 16 GB budget.) "Three pages and a note from two different apps, and she never copied a thing." | When it's done, click **Show more**: point at the full answer. Then **Hide chat**. |
+| ~1:05 | (Let the spoken answer play: it names the laptops and the €1,200 / 16 GB budget.) "Three pages and a note from two different apps, and she never copied a thing. **ChatGPT or Claude would need her to explain or screenshot all that. Screenpipe or Recall would let her search it. Glance already has it, and acts on it.**" (15 s: take it from the Point beat's filler.) | When it's done, click **Show more**: point at the full answer. Then **Hide chat**. |
 | **1:15** | "Now a spec she doesn't get." | **Tap ⌥Space** → click **Point** → drag a box over the "Unified memory" row. |
 | 1:20 | | **Hold ⌥Space**: *"What does this mean for me?"* Release. |
 | 1:23 | *Filler B*: "Pointing is just a box. Only that box and her question go out, and she can see exactly what was sent." | Wait. |
@@ -72,13 +72,27 @@ If the wait passes 30 s, say: "It's thinking hard; I'll show you the answer in t
 
 ---
 
+## 2b. Why not just…? (as far as we know; we haven't benchmarked any of these)
+
+| | Context across apps, last few minutes | Points at the real control on screen | Step-by-step guide through menus | Redacts before sending + excluded apps | Local-only mode |
+|---|---|---|---|---|---|
+| **Glance** | Yes (10 min, on the Mac) | Yes (Accessibility, OCR fallback) | Yes (follows File › Export To › PDF… live, catches wrong menus) | Yes | Yes (Apple on-device model) |
+| ChatGPT / Claude / Gemini desktop apps | You explain or share a screenshot/window | No, answers in chat | Text instructions | Your responsibility | No (cloud) |
+| Claude computer use / agents | Screenshots of the current screen | It clicks for you instead of teaching you | It does the task, you don't learn it | Depends on the setup | No |
+| Screenpipe / Rewind / Microsoft Recall | Yes: they record and search your history | No | No | Recall filters some sensitive info; all keep data locally | Screenpipe and Recall are local |
+| Cluely-style overlays | The current screen/meeting | No | No | Not their focus | No |
+
+One line: **"Screenpipe remembers your screen. Glance helps you act on it, privately."**
+
+---
+
 ## 3. Short versions
 
 ### 60 seconds
 "Aoife needs a laptop under €1,200 and has to learn Pages for college. Every AI makes her explain her screen from scratch. Glance is a Mac companion that already knows what she's been looking at. [Hold ⌥Space] *'Which of the laptops I looked at fits my budget?'* It answers from three pages and her Notes, and she never copied a thing. [Pages] *'Show me how to export this as a PDF.'* Pip flies to the real File menu, follows her through Export To, PDF and Next, and corrects her if she opens the wrong menu. It never clicks for her. And it's private: card numbers and passwords are blacked out before anything is sent, risky sends need her OK, and one click forgets the last ten minutes. Screenpipe remembers your screen. Glance helps you act on it, privately."
 
 ### 30-second elevator pitch
-"Glance is a Mac app that already knows what you've been looking at. Point at anything, or just ask, and it explains it, or flies to the exact button and guides you step by step through any app. It's private by design: sensitive numbers are hidden before anything leaves your Mac, risky sends ask first, and memory forgets itself after ten minutes. Screenpipe remembers your screen. Glance helps you act on it."
+"ChatGPT makes you explain your screen; Screenpipe just records it. Glance is a Mac app that already knows what you've been looking at. Point at anything, or just ask, and it explains it, or flies to the exact button and guides you step by step through any app. It's private by design: sensitive numbers are hidden before anything leaves your Mac, risky sends ask first, and memory forgets itself after ten minutes. Screenpipe remembers your screen. Glance helps you act on it."
 
 ---
 
@@ -86,6 +100,15 @@ If the wait passes 30 s, say: "It's thinking hard; I'll show you the answer in t
 
 **How is this different from Screenpipe, or ChatGPT with a screenshot?**
 "A screenshot is one moment in one app. Glance keeps a ten-minute private memory across apps, so 'the laptops I looked at' works. And it doesn't stop at an answer: Guide points at the real button and follows you through the steps. As far as we know, Screenpipe is an open-source screen recorder with search. It's great at remembering, and we focus on acting. We haven't benchmarked against it."
+
+**Why not just use ChatGPT or Claude's desktop app?**
+"You'd have to explain or screenshot what you looked at in other apps. Glance already has the last ten minutes, and it points at the real button and walks you through, instead of writing instructions in a chat."
+
+**Isn't this Microsoft Recall or Rewind?**
+"Those record and search your history; as far as we know that's their job. Glance keeps only ten minutes, never stores banking, password or private windows, redacts before sending, and uses that context to guide you step by step."
+
+**Why not let an AI agent just click it for her?**
+"Then she never learns Pages. Guide teaches; it never clicks. Agent mode, with plan approval, is our next phase, not this one."
 
 **What exactly gets sent?**
 "Only when you ask. Your question, plus either your box selection or, without one, the text of the front window and a redacted summary of the last ten minutes. In Guide, the menu and button names plus the screen text, and an image only if the model accepts images. Everything goes through one function that redacts it first, and the panel shows a preview of what went."
