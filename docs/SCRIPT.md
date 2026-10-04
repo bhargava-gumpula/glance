@@ -21,6 +21,30 @@ Everything here exists on `main` (e770a5c). Judges score what was built today, s
 
 ---
 
+## 0. Introduction (about 60 s, before the demo)
+
+"Hi, we're [team names], and this is Glance.
+
+Think about the last time you asked an AI for help with something on your computer. You took a screenshot. You copied and pasted. You explained what you were looking at, what you'd already tried, and what you were trying to do. And then it answered with a wall of text, and you still had to figure out where to click.
+
+Your computer already knows all of that. It's right there on your screen. The AI just can't see it.
+
+**Glance is an AI companion for your Mac that understands what you're doing, across every app, without you explaining anything.**
+
+It keeps a short, private memory of what you've been looking at: just the last ten minutes, on your own Mac. When you need help, you press one shortcut and ask, out loud or by typing. You can point at anything on screen, a spec, a chart, a confusing setting, and it explains it in plain language using everything you've been doing.
+
+And when you need to *do* something, Glance doesn't just tell you how. Pip, our little penguin, flies to the exact button on your screen and guides you through it step by step, noticing if you click the wrong thing.
+
+Because it sees your screen, privacy was built in from the start. Passwords, banking pages and private windows are never recorded. Card numbers and personal details are hidden before anything is sent. And you can wipe the memory with one click.
+
+Other tools record your screen, or make you explain it to a chatbot. **Glance remembers your screen, and helps you act on it, privately.**
+
+Let us show you."
+
+**Short (about 20 s):** "Every AI makes you explain your screen: screenshots, copy-paste, repeat. Glance is a Mac companion that already knows what you've been doing across your apps. Point at anything or just ask, and it explains it, or Pip flies to the exact button and guides you step by step. And it's private: sensitive details are hidden before anything leaves your Mac. Let us show you."
+
+---
+
 ## 1. Main script (3:00)
 
 One presenter (P) and one driver (D). It also works with one person doing both: DO lines are short.
