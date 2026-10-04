@@ -143,3 +143,4 @@ Built so far:
 
 ## Notes
 - Phase 3 (memory) background, root causes and open checks: [docs/notes/PHASE3-NOTES.md](notes/PHASE3-NOTES.md)
+- Phase 2 (voice) architecture, decisions, ElevenLabs facts, audit A1–A12 and open items: [docs/notes/PHASE2-NOTES.md](notes/PHASE2-NOTES.md)
