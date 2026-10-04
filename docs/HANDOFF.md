@@ -189,11 +189,18 @@ Built so far:
 - [ ] Pages: "Show me how to export this as a PDF" → Send → Pip at File → open File: Pip moves to Export To, then PDF… with no "next" → Next… and Export via tap or "next" → Done, Pip goes home. 3 times in a row.
 - [ ] TextEdit once (File › Export as PDF… › Save). Once with Cancel (nothing sent). Once on DeepSeek.
 
-### Phase 5 not done / limits
+### Phase 5 hardening (integration, owner request "make sure the highlighted step by step works")
+- Real labels, read from the app bundles (this shell has no Accessibility grant): Pages File › Export To › PDF…/Word…/Plain Text…/EPUB…, then the "Export Your Document" sheet (Next, Cancel), then a save panel. TextEdit File › Export as PDF… then a save panel. Matching ignores case and a trailing "…".
+- Submenus: if Pages never posts AXMenuOpened for Export To's submenu, a 150 ms poll sees the submenu and moves Pip to PDF… (log: "submenu seen by poll").
+- Mid-path: if File (or File › Export To) is already open when the step arrives, Pip goes straight to the next item.
+- Esc stops Guide, except an Esc that closes a menu (menu open now or within 0.6 s).
+- Speech: Guide speaks only step instructions (the step's say, "Hover Export To.", "Click PDF….", "That's Edit. Close it and click File."). "Let me look…", why, done, not-found and errors are shown in the bubble/panel only.
+- Trace for one owner run: `/usr/bin/log stream --predicate 'subsystem == "ie.dublinhacx.glance" && eventMessage BEGINSWITH "guide:"' --info`. It logs snapshot counts and timing, step status/ref/role/label/path, the resolved target (menu/ax/ocr/not found) with its Cocoa rect, every AX menu note, each hop with its AX frame, poll hits, redirects, Esc and failures. No screen text.
+
+### Phase 5 limits
 - Phase 6 items (auto re-check, GuideWatcher, verdict, `next[]` local advance at runtime, 20 s nudge) are not built; `Config.guideAutoRecheck` is unused.
-- No global Esc; use Stop / "stop". "Start at hop i+1 when path[0..i] is already open" is not implemented (Pip starts at path[0]).
-- The Window menu is skipped entirely (its document list); Minimize/Zoom can't be guided.
-- If `AXMenuOpened` doesn't fire for submenus in Pages, add the 150 ms frame poll from the brief.
+- The Window menu is skipped entirely (its document list).
+- Pip's own window stays `.floating`, so an open submenu can cover Pip; the ring (popUpMenu+1) stays on top.
 
 ## Notes
 - UI (Pip and the chat panel) architecture, Guide API, decisions, audit A13–A16 and gaps: [docs/notes/UI-NOTES.md](notes/UI-NOTES.md)

@@ -88,6 +88,20 @@ enum Guide {
         return nil
     }
 
+    /// Target kind, title and Cocoa rect for the log (UI labels only, never screen text).
+    @MainActor static func logTarget(_ t: GuideTarget) -> String {
+        let h0 = NSScreen.screens.first?.frame.height ?? 0
+        switch t {
+        case .menuPath(let e, let bar):
+            let r = bar.flatMap(AX.frame).map { PetGeometry.cocoaRect(fromAX: $0, primaryHeight: h0) }
+            return "menu \(e.path.joined(separator: " › ")) bar \(r.map(NSStringFromRect) ?? "no frame")"
+        case .ax(let f): return "ax control cocoa \(NSStringFromRect(PetGeometry.cocoaRect(fromAX: f, primaryHeight: h0)))"
+        case .ocr(let box, let region, let size):
+            return "ocr box cocoa \(NSStringFromRect(PetGeometry.cocoaRect(fromVision: visionRect(ocrBox: box, imageSize: size), in: region)))"
+        case .none: return "not found (no ring)"
+        }
+    }
+
     static func describe(_ s: GuideStep) -> String {
         if let p = s.menu_path, !p.isEmpty { return p.joined(separator: " › ") }
         return s.label ?? s.say ?? "step"
@@ -287,6 +301,24 @@ final class GuideSession {
 
     init(chat: ChatModel) { self.chat = chat }
 
+    private var escMonitors: [Any] = []
+
+    /// Esc stops the session (only observed, never consumed), unless it was closing a menu.
+    private func watchEsc() {
+        let onEsc: (NSEvent) -> Void = { [weak self] e in
+            guard e.keyCode == 53 else { return }
+            MainActor.assumeIsolated {
+                guard let self, self.active,
+                      MenuFollower.escStops(menuOpen: self.follower?.menuOpen ?? false,
+                                            lastMenuActivity: self.follower?.lastMenuActivity, now: Date()) else { return }
+                log.notice("guide: Esc → stop")
+                self.stop(say: "Stopped.")
+            }
+        }
+        if let g = NSEvent.addGlobalMonitorForEvents(matching: .keyDown, handler: onEsc) { escMonitors.append(g) }
+        if let l = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { onEsc($0); return $0 }) { escMonitors.append(l) }
+    }
+
     var active: Bool { goal != nil }
 
     /// Called at the top of `ChatModel.ask`. True when Guide handled the words.
@@ -318,6 +350,7 @@ final class GuideSession {
         sends = 0
         consent = nil
         chat.mode = .guide
+        watchEsc()
         GuideHighlight.begin()
         GuideHighlight.show(nil, say: "Let me look at your screen…")
         runStep(userText: nil)
@@ -333,8 +366,7 @@ final class GuideSession {
     func why() {
         let text = step?.why ?? "I don't have a reason for this one."
         chat.turns.append(.init(kind: .assistant, text: text))
-        speak(text)
-        GuideHighlight.pet?.say(text)
+        GuideHighlight.pet?.say(text) // shown, not spoken: Guide speaks only step instructions
     }
 
     func skip() {
@@ -351,6 +383,8 @@ final class GuideSession {
     }
 
     private func end() {
+        escMonitors.forEach(NSEvent.removeMonitor)
+        escMonitors = []
         task?.cancel()
         idle?.cancel()
         follower?.stop()
@@ -435,34 +469,36 @@ final class GuideSession {
             if let say = GuideStep.recoveredSay(raw) {
                 let t = Locator.resolve(GuideStep(status: "step", say: say, label: say), snap, packet ?? .memoryOnly())
                 chat.turns.append(.init(kind: .assistant, text: say))
+                log.notice("guide: unparsable reply; recovered a label → \(Guide.logTarget(t), privacy: .public)")
                 GuideHighlight.show(t, say: say)
-                speak(say)
+                speakStep(say)
             } else {
                 chat.turns.append(.init(kind: .assistant, text: raw.isEmpty ? "No answer." : raw))
+                log.error("guide: unparsable reply, nothing to point at")
             }
             return
         }
         step = s
         let say = s.say ?? s.label ?? ""
+        log.notice("guide: step status \(s.status, privacy: .public) ref \(s.ref ?? "null", privacy: .public) role \(s.role ?? "-", privacy: .public) label \(s.label ?? "-", privacy: .public) path \((s.menu_path ?? []).joined(separator: " › "), privacy: .public) last \(s.last ?? false, privacy: .public)")
         switch s.status {
         case "done":
             chat.turns.append(.init(kind: .assistant, text: say.isEmpty ? "Done!" : say))
-            speak(say.isEmpty ? "Done!" : say)
             GuideHighlight.show(nil, say: say.isEmpty ? "Done!" : say)
             finish()
         case "blocked", "not_found":
             chat.turns.append(.init(kind: .assistant, text: say))
             GuideHighlight.show(nil, say: say)
-            speak(say)
         default:
             stepNumber += 1
             let target = Locator.resolve(s, snap, packet ?? .memoryOnly())
             var text = "**Step \(stepNumber):** \(Guide.describe(s))\n\(say)"
             if let why = s.why { text += "\n_Why:_ \(why)" }
             chat.turns.append(.init(kind: .assistant, text: text))
-            if case .none = target { GuideHighlight.show(nil, say: say); speak(say); return }
+            log.notice("guide: step \(self.stepNumber, privacy: .public) → \(Guide.logTarget(target), privacy: .public)")
+            if case .none = target { GuideHighlight.show(nil, say: say); speakStep(say); return }
             GuideHighlight.show(target, say: say)
-            speak(say)
+            speakStep(say)
             if case .menuPath(let entry, let bar) = target { follow(entry.path, bar: bar, last: s.last ?? false) }
             resetIdle()
         }
@@ -477,22 +513,20 @@ final class GuideSession {
             switch event {
             case .point(let frame, let say):
                 GuideHighlight.show(PetGeometry.cocoaRect(fromAX: frame, primaryHeight: h0), say: say)
-                self.speak(say)
+                self.speakStep(say)
             case .redirect(let frame, let say):
                 GuideHighlight.show(frame.map { PetGeometry.cocoaRect(fromAX: $0, primaryHeight: h0) }, say: say)
-                self.speak(say)
+                self.speakStep(say)
             case .done:
                 self.follower?.stop()
                 self.follower = nil
                 if last {
                     self.progress.append(path.joined(separator: " › ") + " → done")
-                    self.speak("Done!")
                     GuideHighlight.show(nil, say: "Done!")
                     self.finish()
                 } else {
                     let say = "Nice. Say next, or tap \(Config.hotkeyDescription), for the next step."
                     GuideHighlight.show(nil, say: say)
-                    self.speak("Nice. Say next for the next step.")
                 }
             }
         }
@@ -525,7 +559,8 @@ final class GuideSession {
         }
     }
 
-    private func speak(_ text: String) {
+    /// Owner rule: Guide speaks only the step instruction itself; status, why, done and errors are shown silently.
+    private func speakStep(_ text: String) {
         guard !text.isEmpty else { return }
         speaker.begin(Voice.tts(muted: chat.muted) { _ in })
         speaker.feed(text)

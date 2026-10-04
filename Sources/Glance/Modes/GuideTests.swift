@@ -56,6 +56,31 @@ enum GuideTests {
               "guide: Apple menu and skipped menus absent")
         check(menus.barItem("Apple") == nil && menus.bar.map(\.title) == ["Pages", "File", "Edit"], "guide: menu bar without Apple/skipped")
 
+        // Real labels (read from the app bundles, 2026-10-03): Pages File › Export To › PDF…/Word…/EPUB…; TextEdit File › Export as PDF…
+        let pages = MenuIndex(bar: [N(title: "Apple"), N(title: "Pages"), N(title: "File", children: [
+            N(title: "Export To", children: [N(title: "PDF…"), N(title: "Word…"), N(title: "Plain Text…"), N(title: "EPUB…")])])])
+        check(pages.resolve(["File", "Export To", "PDF"])?.display == "File > Export To > PDF…"
+              && pages.resolve(["File", "Export to…", "PDF..."]) != nil, "guide: Pages export path, with or without …")
+        let textEdit = MenuIndex(bar: [N(title: "Apple"), N(title: "TextEdit"), N(title: "File", children: [
+            N(title: "Export as PDF…"), N(title: "Print…")])])
+        check(textEdit.resolve(["File", "Export as PDF"])?.path == ["File", "Export as PDF…"]
+              && textEdit.resolve(["Export as PDF…"]) != nil, "guide: TextEdit Export as PDF… resolves")
+
+        // Menu follower: mid-path start, no repeated announcements, Esc that closes a menu doesn't stop Guide
+        check(MenuFollower.resumeHop(openLevels: 0, pathCount: 3) == nil, "guide: nothing open → start at path[0]")
+        check(MenuFollower.resumeHop(openLevels: 1, pathCount: 3) == 1, "guide: File already open → point at Export To")
+        check(MenuFollower.resumeHop(openLevels: 2, pathCount: 3) == 2, "guide: Export To already open → point at PDF…")
+        check(MenuFollower.resumeHop(openLevels: 5, pathCount: 3) == 2 && MenuFollower.resumeHop(openLevels: 1, pathCount: 1) == nil,
+              "guide: resume never past the last item")
+        check(MenuFollower.shouldAnnounce(hop: 2, pointed: 1) && !MenuFollower.shouldAnnounce(hop: 2, pointed: 2),
+              "guide: poll + notification announce a hop once")
+        let now = Date()
+        check(MenuFollower.escStops(menuOpen: false, lastMenuActivity: nil, now: now), "guide: Esc stops with no menu")
+        check(!MenuFollower.escStops(menuOpen: true, lastMenuActivity: now, now: now)
+              && !MenuFollower.escStops(menuOpen: false, lastMenuActivity: now.addingTimeInterval(-0.2), now: now),
+              "guide: Esc that closes a menu doesn't stop Guide")
+        check(MenuFollower.escStops(menuOpen: false, lastMenuActivity: now.addingTimeInterval(-2), now: now), "guide: later Esc stops")
+
         // 5. localAdvance (exact normalized, never contains)
         check(Guide.localAdvance("Export", candidates: ["Export To", "Export Your Document"]) == nil, "guide: Export ≠ Export To")
         check(Guide.localAdvance("Export", candidates: ["Cancel", "Export…"]) == 1, "guide: single exact match")
