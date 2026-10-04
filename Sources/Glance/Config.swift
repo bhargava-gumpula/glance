@@ -93,8 +93,10 @@ enum Config {
     /// Sends per Guide session before consent is asked again; consent also lapses after `guideConsentMinutes`.
     static let guideMaxSends = 20
     static let guideConsentMinutes = 10.0
-    /// Phase 6 kill switch (unused in v1).
-    static let guideAutoRecheck = true
+    /// Phase 6 kill switch: false = Guide v1 (tap or "next"). `defaults write ie.dublinhacx.glance guideAutoRecheck -bool NO`
+    static var guideAutoRecheck: Bool { value("guideAutoRecheck", default: true) }
+    /// Guide v2 re-says the current step after this long without progress.
+    static let guideNudgeSeconds = 20.0
 
     // MARK: AI providers
 
