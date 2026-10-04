@@ -693,10 +693,13 @@ final class GuideSession {
     }
 }
 
-/// Guide's single path to the model: `ContextPacket.send`, with consent before the first full-screen send.
+/// Guide's single path to the model: `ContextPacket.send`. With `Config.guideAutoSend` (owner default) every Guide send
+/// goes without a Send/Cancel tap; exclusions, refusals, redaction, blackout and the preview row all still apply.
+/// Off: consent before the first full-screen send, as in v1.
 @MainActor
 enum GuideSend {
     static func send(_ packet: ContextPacket, question: String, provider: AIProvider, needsConsent: Bool,
+                     autoSend: Bool = Config.guideAutoSend,
                      preview: @escaping (String, NSImage?) -> Void,
                      consented: @escaping (Bool) -> Void) -> AsyncThrowingStream<String, Error> {
         var packet = packet
@@ -704,15 +707,17 @@ enum GuideSend {
         let names = packet.guideBlock.map { $0.split(separator: "\n").filter { $0.first == "M" || $0.first == "A" }.count } ?? 0
         let what = provider.supportsImages ? "image + \(packet.lines.count) lines + \(names) control names"
             : "text only (\(packet.lines.count) lines + \(names) control names); the image stays on this Mac"
-        let card = "Guide will send your whole screen (redacted) to \(provider.name): \(what). Hid \(packet.redactions)."
+        let card = (autoSend ? "Guide sent your whole screen (redacted) to " : "Guide will send your whole screen (redacted) to ")
+            + "\(provider.name): \(what). Hid \(packet.redactions)."
         @MainActor func ask(_ p: ContextPacket.Preview) async -> Bool {
             let ok = await GuideConsent.ask(card + (p.confirmPrompt.map { " " + $0 } ?? " Send?"))
             consented(ok)
             return ok
         }
+        @MainActor func accept(_ p: ContextPacket.Preview) async -> Bool { true }
         // Every send still adds a non-blocking preview row.
         return ContextPacket.send(packet, history: [], question: question, reveal: false, announce: true,
                                   mode: .guide, provider: provider, showPreview: { p in preview(card, p.image) },
-                                  confirm: needsConsent ? ask : nil)
+                                  confirm: autoSend ? accept : needsConsent ? ask : nil)
     }
 }

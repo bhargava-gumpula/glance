@@ -91,6 +91,9 @@ enum Config {
     /// Seconds before a slow model reply counts as failed.
     static let guideProviderTimeout = 8.0
     /// Sends per Guide session before consent is asked again; consent also lapses after `guideConsentMinutes`.
+    /// Owner request: Guide sends without a Send/Cancel tap (redaction, blackout, exclusions and the preview row stay).
+    /// Set the `guideAutoSend` default to false to ask once per session again.
+    static var guideAutoSend: Bool { value("guideAutoSend", default: true) }
     static let guideMaxSends = 20
     static let guideConsentMinutes = 10.0
     /// Phase 6 kill switch: false = Guide v1 (tap or "next"). `defaults write ie.dublinhacx.glance guideAutoRecheck -bool NO`
