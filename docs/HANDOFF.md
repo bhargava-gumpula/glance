@@ -141,7 +141,7 @@ Built so far:
 ## Phase 4 (visible privacy + local-only, branch `phase4`)
 - **Send/Cancel** (`UI/SendConfirm.swift`, reusable): `ContextPacket.send(..., confirm:)` waits for a tap only when the outgoing text has a high-risk tag ([CARD] [IBAN] [PPSN] [SSN] [PASSWORD] [PIN] [KEY] [SECRET] [TOKEN] [WALLET]) or is a reveal. Names, emails, phones and addresses go without a tap. The panel (card above the input) and Pip's bubble show e.g. "Hid 2 card numbers and 1 IBAN. Send?" with Send/Cancel; Return/Esc and a spoken "send"/"cancel" (hold ⌥Space) work too. Cancel sends nothing and shows "Cancelled. Nothing was sent." A packet's items ask once per conversation; a card typed in a follow-up asks again. Guide (Phase 5) passes its own `confirm:`, which is always awaited. `isScreen` packets are never revealed.
 - **Redactor:** passwords are now `[PASSWORD]`, CVV/PIN values `[PIN]` (were [SECRET]/[ID]). A bare "Name" label tags the next OCR line as [NAME]; a label directly under a label (an "Account holder" heading above "Name") stays a label.
-- **"I hid N":** a fixed local line ("I hid 3 sensitive items before sending.", or the confirm prompt) is spoken and shown by Pip before the answer (`Speaker.say`). Never from the model.
+- **"I hid N" announcement removed (owner request):** nothing is spoken or shown in Pip's bubble; the panel preview still says "🔒 Hid N sensitive item(s)", and high-risk items still get the Send/Cancel card.
 - **Local only:** menu "Local Only" (checkmark) and the Settings toggle, both UserDefaults `localOnly`. AI = `LocalOnlyProvider`: the Local provider (Ollama/LM Studio); if it fails before its first word, Apple's on-device model (`AppleOnDeviceProvider`, FoundationModels `SystemLanguageModel.default`, never Private Cloud Compute; text only; the prompt is cut to ~9k chars, keeping the question). Speech-to-text = Apple on-device only, voice = Mac voice. A green "Local only" badge shows in the panel header and under Pip.
 - **Network gate** (`Network.swift`): every request goes through `Network.data(for:)` / `bytes(for:)` / `fire(_)`. While local only is on, any host but localhost/127.0.0.1/::1 throws `Network.Blocked` before a connection opens. The selftest scans every source file and fails on `URLSession`, `dataTask(`, `bytes(for:`, `NWConnection`, `WKWebView` etc. outside Network.swift.
 - **Preview:** the image is full width, up to 220 pt tall; click it to open it full size.
@@ -151,8 +151,8 @@ Built so far:
 ### Phase 4 check (owner, needs `./scripts/build-app.sh` from the `phase4` worktree)
 - [x] `./scripts/selftest.sh` passes, including the network-gate inventory (agent)
 - [ ] `open demo/mock-bank.html` → ⌥Space → drag over the whole page → ask "what is this?" → the preview shows black boxes, Pip/panel ask "Hid 1 card number, 1 IBAN, 1 PPS number, 1 password and N other items. Send?" → **Cancel** → "Cancelled. Nothing was sent." (no answer)
-- [ ] Same again → **Send** → the voice says the line first, then answers
-- [ ] A selection with only an email → "I hid 1 sensitive item before sending." is spoken, with no tap
+- [ ] Same again → **Send** → it answers
+- [ ] A selection with only an email → sent with no tap and nothing spoken about it; the preview shows "🔒 Hid 1 sensitive item(s)"
 - [ ] Menu → Local Only → badge on panel and Pip; ask a question → answer from Apple's on-device model (no Ollama); `nettop -p $(pgrep -x Glance)` shows no outbound traffic
 
 ## Tested build (owner-confirmed, 2026-10-03 18:15)

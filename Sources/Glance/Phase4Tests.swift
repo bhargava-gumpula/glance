@@ -23,8 +23,6 @@ enum Phase4Tests {
         for tag in ["[CARD]", "[IBAN]", "[PPSN]", "[SSN]", "[PASSWORD]", "[PIN]", "[KEY]", "[SECRET]", "[WALLET]"] {
             check(SendConfirm.prompt(highRisk: SendConfirm.highRisk(in: [tag]), total: 1, revealed: false) != nil, "confirm: \(tag) asks")
         }
-        check(SendConfirm.hidLine(3) == "I hid 3 sensitive items before sending." && SendConfirm.hidLine(1) == "I hid 1 sensitive item before sending."
-              && SendConfirm.hidLine(0) == nil, "hid line: fixed local text")
         check(SendConfirm.spokenAnswer("Send.") == true && SendConfirm.spokenAnswer("cancel") == false
               && SendConfirm.spokenAnswer("no, don't send") == false && SendConfirm.spokenAnswer("What does this card do?") == nil,
               "confirm: spoken send / cancel")

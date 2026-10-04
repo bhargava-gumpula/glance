@@ -29,7 +29,6 @@ final class PanelController {
         panel.hidesOnDeactivate = false
         panel.contentView = NSHostingView(rootView: PanelView(chat: chat))
         pet = PetController(chat: chat)
-        chat.onSay = { [weak self] in self?.pet.say($0) } // Phase 4: Pip shows the fixed "I hid N" line
         pet.show()
 
         chat.onPoint = { [weak self] in self?.pointTool.start() }
@@ -160,8 +159,6 @@ final class ChatModel: ObservableObject {
         }
     }
     var onPoint: (() -> Void)?
-    /// Phase 4: Pip shows the fixed "I hid N" / confirm line.
-    var onSay: ((String) -> Void)?
     var timeline: Timeline?
 
     let mode = Mode.explain
@@ -322,11 +319,9 @@ final class ChatModel: ObservableObject {
             let announce = history.isEmpty || (reveal && !revealed) || Self.needsPreview(first: previewedFor, now: target)
             if announce { previewedFor = target }
             revealed = reveal
-            var hidLine: String? // Phase 4: fixed local line, spoken and shown by Pip before the answer
             var confirming = false
             let answer = ContextPacket.send(packet, history: history, question: question, reveal: reveal,
                                             announce: announce, mode: mode, provider: provider) { preview in
-                hidLine = preview.confirmPrompt ?? (preview.revealed ? nil : SendConfirm.hidLine(preview.redactions))
                 confirming = preview.confirmPrompt != nil
                 var text = "Sending to \(preview.providerName): "
                 if preview.image == nil && preview.selectedText.isEmpty {
@@ -357,7 +352,6 @@ final class ChatModel: ObservableObject {
             speaker.begin(tts) {
                 if let spokenAt { log.notice("voice: release → first spoken audio \(Date().timeIntervalSince(spokenAt), format: .fixed(precision: 2), privacy: .public) s") }
             }
-            if let hidLine { speaker.say(hidLine); onSay?(hidLine) }
             do {
                 var raw = ""
                 for try await delta in answer {
