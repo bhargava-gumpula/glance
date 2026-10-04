@@ -110,6 +110,29 @@ final class PetController {
         if let home { apply(home, animated: true) }
     }
 
+    /// Glance was shown: pop up in the centre of the active screen, then fly to its top-right corner.
+    /// With Reduce Motion, appear at the corner directly.
+    func appear() {
+        let mouse = NSEvent.mouseLocation
+        guard let vf = (NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main)?.visibleFrame else { return }
+        model.pointing = false
+        ring.hide()
+        let target = PetGeometry.home(in: vf, window: Self.size, sprite: Self.sprite)
+        home = target
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            apply(target, animated: false)
+            window.orderFrontRegardless()
+            return
+        }
+        apply(PetGeometry.center(in: vf, window: Self.size, sprite: Self.sprite), animated: false)
+        window.orderFrontRegardless()
+        flight = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(450)) // a beat in the middle so it's seen
+            guard let self, !Task.isCancelled, self.home == target, !self.model.pointing else { return }
+            self.apply(target, animated: true)
+        }
+    }
+
     private func resetHome() {
         guard let vf = NSScreen.main?.visibleFrame else { return }
         home = PetGeometry.home(in: vf, window: Self.size, sprite: Self.sprite)

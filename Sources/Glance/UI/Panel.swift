@@ -105,10 +105,12 @@ final class PanelController {
     private func show(pointing: Bool) {
         if let screen = NSScreen.main {
             let frame = screen.visibleFrame
-            panel.setFrameOrigin(NSPoint(x: frame.maxX - panel.frame.width - 24,
+            // Left of Pip's top-right home, so Pip and its bubble don't cover the chat.
+            panel.setFrameOrigin(NSPoint(x: frame.maxX - PetController.size.width - 8 - panel.frame.width,
                                          y: frame.maxY - panel.frame.height - 24))
         }
         panel.orderFrontRegardless()
+        pet.appear()
         if pointing { pointTool.start() }
     }
 

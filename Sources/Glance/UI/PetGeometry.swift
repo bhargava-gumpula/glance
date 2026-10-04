@@ -51,9 +51,15 @@ enum PetGeometry {
         return layout(sprite: CGRect(origin: s, size: sprite), in: vf, window: window, pointLeft: pointLeft)
     }
 
-    /// Pip in the bottom-right corner of `vf`.
+    /// Pip's home: the top-right corner of `vf` (the visible frame, so below the menu bar); the bubble flips below.
     static func home(in vf: CGRect, window: CGSize, sprite: CGSize, inset: CGFloat = 16) -> Layout {
-        layout(sprite: CGRect(x: vf.maxX - inset - sprite.width, y: vf.minY + inset, width: sprite.width, height: sprite.height),
+        layout(sprite: CGRect(x: vf.maxX - inset - sprite.width, y: vf.maxY - inset - sprite.height, width: sprite.width, height: sprite.height),
+               in: vf, window: window, pointLeft: true)
+    }
+
+    /// Where Pip appears when Glance is shown, before it flies home: the centre of `vf`.
+    static func center(in vf: CGRect, window: CGSize, sprite: CGSize) -> Layout {
+        layout(sprite: CGRect(x: vf.midX - sprite.width / 2, y: vf.midY - sprite.height / 2, width: sprite.width, height: sprite.height),
                in: vf, window: window, pointLeft: true)
     }
 
@@ -128,8 +134,10 @@ enum PetGeometry {
         check(sprite(p).minY == t.maxY + 8 && abs(sprite(p).midX - t.midX) < 1, "pet: full-width target puts Pip above it")
 
         let h = home(in: main, window: win, sprite: spr)
-        check(sprite(h) == CGRect(x: 1304, y: 16, width: 120, height: 90) && h.pointLeft && !h.bubbleBelow && fits(h),
-              "pet: home is the bottom-right corner")
+        check(sprite(h) == CGRect(x: 1304, y: 875 - 16 - 90, width: 120, height: 90) && h.pointLeft && h.bubbleBelow && fits(h)
+              && main.contains(CGRect(origin: h.origin, size: win)), "pet: home is the top-right corner, bubble below, window on screen")
+        let c = center(in: main, window: win, sprite: spr)
+        check(sprite(c) == CGRect(x: 660, y: 392.5, width: 120, height: 90) && fits(c), "pet: appears in the centre of the screen")
         check(isOffScreen(CGRect(x: 2000, y: 16, width: 120, height: 90), screens: [main])
               && !isOffScreen(sprite(h), screens: [main]), "pet: home off every screen is detected")
     }
