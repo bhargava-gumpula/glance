@@ -9,6 +9,9 @@ final class Recorder: @unchecked Sendable {
     static let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true)!
 
     func start() throws {
+        if running { _ = stop() } // only one tap per bus: a second installTap raises an exception Swift can't catch
+        // Without permission the engine "records" silence instead of failing, so check first.
+        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { throw VoiceError.noMicrophone }
         lock.lock(); pcm.removeAll(); lock.unlock()
         let input = engine.inputNode
         let inFmt = input.outputFormat(forBus: 0)
@@ -61,13 +64,22 @@ final class PCMPlayer: @unchecked Sendable {
     private let node = AVAudioPlayerNode()
     private let format = AVAudioFormat(standardFormatWithSampleRate: PCMPlayer.sampleRate, channels: 1)!
     private let lock = NSLock()
+    private var _generation = 0
 
     private init() {
         engine.attach(node)
         engine.connect(node, to: engine.mainMixerNode, format: format)
+        // macOS stops the engine when the output device changes (e.g. headphones); restart on the next buffer.
+        NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { [self] _ in
+            lock.lock(); defer { lock.unlock() }
+            node.stop()
+        }
     }
 
-    func enqueue(_ pcm: Data) {
+    /// Bumped by `stop()`. Audio from a stream that started before the last stop is dropped.
+    var generation: Int { lock.lock(); defer { lock.unlock() }; return _generation }
+
+    func enqueue(_ pcm: Data, generation: Int) {
         let frames = pcm.count / 2
         guard frames > 0, let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames)) else { return }
         buf.frameLength = AVAudioFrameCount(frames)
@@ -78,7 +90,14 @@ final class PCMPlayer: @unchecked Sendable {
             }
         }
         lock.lock(); defer { lock.unlock() }
-        if !engine.isRunning { try? engine.start() }
+        guard generation == _generation else { return }
+        if !engine.isRunning {
+            // play() on a stopped engine raises an exception Swift can't catch, so never call it after a failed start.
+            do { try engine.start() } catch {
+                log.error("voice: audio output failed (\(error.localizedDescription, privacy: .public))")
+                return
+            }
+        }
         if !node.isPlaying { node.play() }
         node.scheduleBuffer(buf, completionHandler: nil)
     }
@@ -86,6 +105,7 @@ final class PCMPlayer: @unchecked Sendable {
     /// Drops everything queued (mute, Stop, or a new question).
     func stop() {
         lock.lock(); defer { lock.unlock() }
+        _generation += 1
         node.stop()
     }
 }

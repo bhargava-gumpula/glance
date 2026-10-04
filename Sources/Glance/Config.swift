@@ -19,8 +19,11 @@ enum Config {
 
     /// Holding the hotkey longer than this means talk; a shorter tap toggles the panel.
     static let holdToTalkSeconds = 0.3
-    /// ElevenLabs voice for spoken answers (default: the premade "Rachel"). Settings override.
-    static var elevenLabsVoiceID: String { value("elevenLabsVoiceID", default: "21m00Tcm4TlvDq8ikWAM") }
+    /// ElevenLabs voice for spoken answers. Settings override.
+    static var elevenLabsVoiceID: String { value("elevenLabsVoiceID", default: defaultElevenLabsVoiceID) }
+    /// "Sarah", a stock voice. If the account can't use it through the API, `VoicePicker` switches to one it can.
+    static let defaultElevenLabsVoiceID = "EXAVITQu4vr4xnSDxMaL"
+    static let ttsTimeoutSeconds: Double = 10
     static let elevenLabsSTTModel = "scribe_v2"
     static let elevenLabsTTSModel = "eleven_flash_v2_5"
     /// After this, speech-to-text falls back to Apple on-device.
@@ -38,6 +41,38 @@ enum Config {
             "com.bitwarden.desktop",
         ])
     }
+
+    // MARK: Memory (Phase 3)
+
+    /// "Forget" in the menu deletes this many minutes back.
+    static let forgetMinutes = 15
+    /// Longest side of the frame the recorder OCRs, in points (5K windows would otherwise cost seconds of OCR).
+    static let memoryMaxCaptureDimension = 1920.0
+    /// Longest side of the stored thumbnail. Full frames are never stored.
+    static let thumbnailMaxDimension = 320
+    /// A frame counts as changed when more than this share of cells in a 128×72 grey copy changed by more than
+    /// 6 grey levels. A blinking caret touches 1–2 cells (0.02 %); scrolling or a new page touches hundreds.
+    static let frameChangeFraction = 0.003
+    /// At most this many earlier windows, and characters per window, go into a question.
+    static let memorySnippetLimit = 6
+    static let memorySnippetChars = 700
+    /// Browsers: private-window and URL checks apply to these.
+    static let browsers: Set<String> = [
+        "com.apple.Safari", "com.apple.SafariTechnologyPreview", "com.google.Chrome", "com.microsoft.edgemac",
+        "com.brave.Browser", "company.thebrowser.Browser", "org.mozilla.firefox", "com.vivaldi.Vivaldi", "com.operasoftware.Opera",
+    ]
+    /// Pages whose URL or window title contains any of these are never stored.
+    static var blockedURLKeywords: [String] {
+        value("blockedURLKeywords", default: [
+            "bank", "aib.ie", "boi.com", "ptsb.ie", "revolut.com", "n26.com", "monzo.com", "creditunion",
+            "paypal.", "stripe.com", "klarna.", "checkout", "payment", "/pay/", "billing", "wallet",
+            "login", "log-in", "signin", "sign-in", "sign in", "log in", "signup", "password", "2fa", "mfa",
+            "accounts.google.com", "appleid.apple.com", "account.apple.com", "login.microsoftonline.com",
+            "revenue.ie", "mygovid", "welfare.ie",
+        ])
+    }
+    /// Window or toolbar text that marks a private window.
+    static let privateWindowMarkers = ["private browsing", "incognito", "inprivate", "private window"]
 
     // MARK: AI providers
 
@@ -96,3 +131,23 @@ enum Config {
 /// Timing and fallback notes, readable with `log stream --predicate 'subsystem == "ie.dublinhacx.glance"'`.
 /// Never log keys, transcripts or screen text here.
 let log = Logger(subsystem: Config.bundleID, category: "glance")
+
+extension Config {
+    /// Audit A11: an API key is only sent to the host it was saved for. Returns the problem, or nil when fine.
+    /// `savedFor` is nil for keys saved before this check existed; those adopt the current host.
+    static func keyHostMismatch(savedFor: String?, baseURL: String) -> String? {
+        guard let savedFor, let host = URL(string: baseURL)?.host, host != savedFor else { return nil }
+        return "This API key was saved for \(savedFor), but the address now points to \(host). Re-enter the key in Settings to use it there."
+    }
+
+    /// Audit A12: the Address field must be an http(s) URL with a host (a pasted key is neither).
+    static func validBaseURL(_ s: String) -> Bool {
+        guard let url = URL(string: s), let scheme = url.scheme?.lowercased() else { return false }
+        return ["http", "https"].contains(scheme) && !(url.host ?? "").isEmpty
+    }
+
+    /// ElevenLabs voice IDs are short and alphanumeric; a key pasted there would be sent in the URL path.
+    static func validVoiceID(_ s: String) -> Bool {
+        !s.hasPrefix("sk_") && (1...32).contains(s.count) && s.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) }
+    }
+}

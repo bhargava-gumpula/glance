@@ -3,6 +3,7 @@
 ## Status
 **Phase 0 (setup): done, gate passed (2026-10-03).**
 **Phase 1 (end-to-end slice): done, gate passed (2026-10-03)** with DeepSeek (via the owner's Azure AI Foundry endpoint, text-only). Claude and OpenAI weren't tested (no keys yet); Ollama isn't installed. **Phase 2 (voice): built, owner checks pending (2026-10-03).** See "Phase 2" below.
+**Phase 3 (cross-app memory): built on branch `phase3`, owner checks pending (2026-10-03).** See "Phase 3" below.
 
 Phase 1 adds:
 - ⌥Space shows the panel and starts the **PointTool**: drag a box over any app (Esc skips). The box stays highlighted and lets clicks through. The "Point" button in the panel starts a new one.
@@ -14,7 +15,7 @@ Phase 1 adds:
 
 ## After the Phase 1 gate (owner request, 2026-10-03)
 - Redaction widened (see DECISIONS.md "Redaction rules"). 80 selftest checks, including product-page lines that must stay untouched.
-- Override: if the question explicitly asks to see hidden data ("don't redact", "unredact", "show the hidden email", "it's okay to see my address"), `send()` uses the raw copy kept in memory. It stays on until the next selection, and the preview shows ⚠️ Not redacted. Excluded apps stay excluded.
+- Override: if the question explicitly asks to see hidden data ("don't redact", "unredact", "show the redacted email", "it's okay to see my address"), `send()` uses the raw copy kept in memory. It stays on until the next selection, and the preview shows ⚠️ Not redacted. Excluded apps stay excluded.
 - `testdata/product.html` has a fake "Account details" block for testing.
 - Known limits: single first names aren't caught (two-word names only, so day names like "Tue" aren't flagged); famous people's names are redacted too; addresses without a street-type word or Eircode are missed.
 
@@ -91,3 +92,35 @@ Built so far:
 - Recording starts on every key-down, so a quick tap shows the orange mic dot for a moment.
 - The default voice ID is the premade "Rachel"; if the account doesn't have it, TTS fails silently (log shows HTTP 4xx). Paste another voice ID in Settings.
 - `pcm_24000` on the free tier is UNVERIFIED; if TTS gets HTTP 4xx, try `pcm_22050` (change `PCMPlayer.sampleRate` too).
+
+## Phase 3 (cross-app memory, branch `phase3`)
+- **Recorder** (`Capture/MemoryRecorder.swift`): every `Config.captureIntervalSeconds` (3 s) it reads the frontmost app and focused window through Accessibility (`Capture/ActiveApp.swift`), runs `Exclusions.memorySkipReason`, then captures **only the frontmost window** with `SCContentFilter(desktopIndependentWindow:)` at 1× points. It re-checks exclusions after the capture, skips unchanged frames (128×72 grey diff, or same text as the last row), OCRs with Phase 1's `OCR.lines` at utility priority, and stores a row.
+- **Timeline** (`Memory/Timeline.swift`): system SQLite 3.54 with FTS5 (checked at startup; memory turns off with a menu message if missing), `schema_version` table with ordered migrations, WAL, `secure_delete`, FTS5 `secure-delete`. File: `~/Library/Application Support/Glance/timeline.sqlite` (0600). Thumbnails are 320 px JPEGs (~2–15 kB) in the row.
+- **Skipped before OCR or storage:** Glance, `Config.excludedApps`, any secure input, private or unreadable browser windows, `Config.blockedURLKeywords` (URL or title). `demo/mock-bank.html` is blocked by "bank".
+- **Menu bar:** the eye icon is the capture indicator: `eye` = recording, `eye.slash` = paused/off, `eye.trianglebadge.exclamationmark` = not saving this window; the menu's first line says why (e.g. "Memory: not saving (password field)"). **Pause Memory / Resume Memory**, **Forget Last 15 Minutes**. Rolling deletion after `Config.retentionMinutes` runs about once a minute (also while paused) and at launch.
+- **In a question:** on the first question of a selection, words from the question and the selected text search the timeline; matching lines from the newest row per window (≤6 windows) are redacted by `Redactor` inside `ContextPacket.withMemory` and sent only through `ContextPacket.send()`. The preview lists them under "From your last 15 min (redacted)". Memory stays redacted even when the user asks to reveal. No background cloud calls.
+- **No Automation prompt:** URLs come from Accessibility, not AppleScript.
+- **Selftest:** 40+ new checks (migrations, reopen, FTS search/escaping, retention, forget, exclusions incl. URL blocklist and secure field, change detection incl. caret blink vs scroll, thumbnail size, snippet redaction incl. reveal). Frame cost on a synthetic 1440×900 page with 40 lines: signature ~5 ms, OCR ~240 ms, thumbnail ~1.5 ms.
+
+### Phase 3 check (owner, needs `./scripts/build-app.sh` from the `phase3` worktree)
+- [ ] `./scripts/selftest.sh` passes (done by the agent: all passed)
+- [ ] Browse 2 laptop pages (docs/DEMO.md), type `demo/budget-note.txt` into Notes, open the 3rd page, point at the specs and ask "How is this different from the earlier ones?" → the answer uses all three laptops and the €1,200 / 16GB budget; the preview shows the memory lines.
+- [ ] Zero rows from an excluded app / password field: note the count, use 1Password or Keychain Access for 10 s, then click into a password field (e.g. a Safari login page) for 10 s, and count again:
+  `sqlite3 ~/Library/Application\ Support/Glance/timeline.sqlite "select count(*), max(datetime(ts,'unixepoch','localtime')) from snapshots"`
+  Recent rows: `sqlite3 ~/Library/Application\ Support/Glance/timeline.sqlite "select datetime(ts,'unixepoch','localtime'), app, window_title, url, length(text), length(thumb) from snapshots order by ts desc limit 10"`
+- [ ] Pause → the icon becomes `eye.slash` and the count stops growing.
+- [ ] Forget Last 15 Minutes → the count query returns 0 (and `select count(*) from snapshots_fts where snapshots_fts match 'laptop'` returns 0).
+- [ ] A Safari private window adds zero rows (private detection is UNVERIFIED; see below).
+- [ ] CPU: `top -pid $(pgrep -x Glance) -l 20 -s 3 | grep -E '^ *[0-9]+ +Glance'` while browsing, and while idle.
+
+### Phase 3 review fixes (after three parallel reviews: privacy, CPU, correctness)
+- Privacy: an incomplete browser AX walk counts as private (skipped); a browser page without a URL is skipped; the AX cache is keyed on the window element (a private and a normal window with the same title no longer share it); the captured window must match the AX focused window's frame; Pause/Forget can't be undone by a capture in flight; a question waiting on an old selection can't overwrite a new one; the memory folder is excluded from Time Machine.
+- CPU: AX calls time out after 0.25 s (a hung app can't freeze Glance); a 256 px capture decides whether anything changed (no full capture or window enumeration on idle ticks); OCR capped at 1920 pt, no language correction; OCR backs off up to 30 s on windows whose pixels change but text doesn't (video, spinners); no capture while the display sleeps or the screen is locked; `synchronous=NORMAL`; trims run off the main thread.
+- A19 (audit): the demo note's "Budget: €1,200 max" line was dropped (it shares no word with laptop specs). Short windows are now sent whole, the 50-row cap before de-duplication is gone, and "the earlier ones" questions fall back to recent windows. Selftest uses the real `demo/budget-note.txt` and fails without the fix.
+
+### Phase 3 gotchas / open items
+- **OCR warm-up flake (found and worked around):** a cold Vision load that runs after NaturalLanguage work (the Redactor's name tagger) fails with `CRImageReaderError error 1`, and OCR then stays empty for the whole process. Retrying in-process for 60 s doesn't help; only a relaunch does. The selftest now runs the warm-up first (as the app does at launch). The app logs the error, retries once, and shows "OCR unavailable — relaunch Glance" in the panel. Remaining risk: a redaction during the ~25 s cold load at the app's first launch after an update.
+- Safari/Chrome private-window detection is UNVERIFIED: Glance looks for "Private Browsing", "Incognito", "InPrivate" in the window title and browser chrome. A browser window it can't read through Accessibility is treated as private (skipped). If Safari pages never get stored, the menu says "not saving (private window)"; tell the agent.
+- Safari URL via `AXDocument`/`AXWebArea AXURL` is UNVERIFIED; without a URL, the blocklist still checks the window title.
+- `IsSecureEventInputEnabled()` is system-wide: an app that leaves Secure Keyboard Entry on (Terminal's option, some password managers) pauses memory; the menu shows "not saving (password field)".
+- This shell had no Accessibility or Screen Recording grant, so the live recorder wasn't run by the agent.
