@@ -278,6 +278,10 @@ enum SelfTest {
         PetGeometry.selfTest(check)
         PetBubbleView.selfTest(check)
         PetView.selfTest(check)
+        Problem.selfTest(check)
+        AnswerBlock.selfTest(check)
+        AppIcon.selfTest(check)
+        MenuBarGlyph.selfTest(check)
         // Phase 3: timeline (temp database)
         let dbPath = NSTemporaryDirectory() + "glance-selftest-\(getpid()).sqlite"
         defer { for ext in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: dbPath + ext) } }

@@ -24,6 +24,14 @@ enum Permission: CaseIterable, Identifiable {
         }
     }
 
+    var symbol: String {
+        switch self {
+        case .screenRecording: "rectangle.dashed.badge.record"
+        case .accessibility: "hand.point.up.left"
+        case .microphone: "mic"
+        }
+    }
+
     var isGranted: Bool {
         switch self {
         case .screenRecording: CGPreflightScreenCaptureAccess()

@@ -212,7 +212,8 @@ struct PetView: View {
     let onDragEnd: () -> Void
 
     nonisolated static func lastReply(in turns: [ChatModel.Turn]) -> ChatModel.Turn? {
-        turns.last { $0.kind == .assistant || $0.kind == .notice }
+        // Phase 8: info notices ("Using Mac voice") stay in the panel, so they don't replace the answer in the bubble.
+        turns.last { $0.kind == .assistant || ($0.kind == .notice && Problem.classify($0.text).severity != .info) }
     }
 
     /// The part of a raw answer that is read aloud: its "Say:" line, or the answer itself without one.
@@ -259,7 +260,7 @@ struct PetView: View {
         let tailRight = l.sprite.x + s.width / 2 > bubbleX + 130
         ZStack(alignment: .topLeading) {
             if let bubble = Self.bubbleText(state: state, transcribing: chat.transcribing, said: model.said,
-                                            reply: reply.map { ($0.id, $0.text) }, spoken: spoken, dismissed: model.dismissed) {
+                                            reply: reply.map { ($0.id, $0.kind == .notice ? Problem.classify($0.text).bubble : $0.text) }, spoken: spoken, dismissed: model.dismissed) {
                 PetBubbleView(text: bubble, tailOnRight: tailRight) { model.dismissed = reply?.id; model.said = nil }
                     .frame(width: 260, height: max(0, l.bubbleBelow ? w.height - spriteTop - s.height - 6 : spriteTop - 6),
                            alignment: Alignment(horizontal: tailRight ? .trailing : .leading, vertical: l.bubbleBelow ? .top : .bottom))
