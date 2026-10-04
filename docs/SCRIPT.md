@@ -25,23 +25,23 @@ Everything here exists on `main` (e770a5c). Judges score what was built today, s
 
 "Hi, we're [team names], and this is Glance.
 
-Think about the last time you asked an AI for help with something on your computer. You took a screenshot. You copied and pasted. You explained what you were looking at, what you'd already tried, and what you were trying to do. And then it answered with a wall of text, and you still had to figure out where to click.
+Think about the last time you asked an AI for help with something on your computer. You took a screenshot. You copied and pasted. You explained what you were looking at, what you'd already tried, what you were trying to do. And it answered with a wall of text, and you still had to figure out where to click.
 
-Your computer already knows all of that. It's right there on your screen. The AI just can't see it.
+The problem isn't the model. It's **context**. Your screen already has everything the AI needs. It just can't see it.
 
-**Glance is an AI companion for your Mac that understands what you're doing, across every app, without you explaining anything.**
+**Glance is a context-aware, multimodal AI companion for your Mac.** It runs **real-time screen understanding** across every app, with **on-device computer vision**, and builds an **ambient, privacy-first memory** of what you've been doing: just the last ten minutes, stored locally.
 
-It keeps a short, private memory of what you've been looking at: just the last ten minutes, on your own Mac. When you need help, you press one shortcut and ask, out loud or by typing. You can point at anything on screen, a spec, a chart, a confusing setting, and it explains it in plain language using everything you've been doing.
+So when you need help, there's no prompt engineering. One shortcut, and you just ask, **voice-first** or by typing. Point at anything, a spec, a chart, a setting, and Glance gives you a **grounded, personalised answer** using your full working context, not a generic one.
 
-And when you need to *do* something, Glance doesn't just tell you how. Pip, our little penguin, flies to the exact button on your screen and guides you through it step by step, noticing if you click the wrong thing.
+And it goes beyond chat. Glance reads the app's **accessibility tree**, the same structure screen readers use, so it **grounds its guidance in the real interface**. Pip, our AI guide, flies to the exact button and walks you through step by step, with **real-time verification** that catches a wrong click instantly.
 
-Because it sees your screen, privacy was built in from the start. Passwords, banking pages and private windows are never recorded. Card numbers and personal details are hidden before anything is sent. And you can wipe the memory with one click.
+Because it sees your screen, it's **private by design**. A **local redaction engine** strips card numbers, IBANs and passwords before anything reaches the model. Banking and password apps are never recorded. And with **Local Only mode**, everything runs on **Apple's on-device model**, so nothing leaves your Mac.
 
 Other tools record your screen, or make you explain it to a chatbot. **Glance remembers your screen, and helps you act on it, privately.**
 
 Let us show you."
 
-**Short (about 20 s):** "Every AI makes you explain your screen: screenshots, copy-paste, repeat. Glance is a Mac companion that already knows what you've been doing across your apps. Point at anything or just ask, and it explains it, or Pip flies to the exact button and guides you step by step. And it's private: sensitive details are hidden before anything leaves your Mac. Let us show you."
+**Short (about 20 s):** "Every AI makes you explain your screen. Glance is a context-aware, multimodal AI companion for your Mac. It understands what you're doing across every app in real time, with a private ten-minute memory stored on-device. Point at anything or just ask, and it explains it, or Pip guides you to the exact button, step by step. Private by design: sensitive data is redacted locally before anything leaves your Mac. Let us show you."
 
 ---
 
