@@ -29,6 +29,20 @@ struct Problem: Equatable {
                            hint: "ElevenLabs couldn't speak, so your Mac reads the answers instead.",
                            detail: reason.isEmpty ? nil : reason)
         }
+        // Phase 4 notices (Send/Cancel confirm, Local-only network gate, on-device model).
+        if has("nothing was sent") {
+            return Problem(severity: .info, symbol: "xmark.circle", title: "Cancelled", hint: "Nothing was sent.")
+        }
+        if has("local only is on") {
+            return Problem(severity: .info, symbol: "lock.laptopcomputer", title: "Kept on this Mac",
+                           hint: "Local only is on, so Glance didn't contact the internet. Turn it off in Settings to use a cloud AI.",
+                           action: .settings, detail: text)
+        }
+        if has("on-device model isn't available") {
+            return Problem(severity: .warning, symbol: "cpu", title: "No on-device model",
+                           hint: "Local only needs Ollama or Apple's on-device model. Start Ollama, or turn off Local only in Settings.",
+                           action: .settings, detail: text)
+        }
         if has("ocr unavailable") {
             return Problem(severity: .error, symbol: "text.viewfinder", title: "Can't read text on screen",
                            hint: "macOS's text reader didn't start. Relaunch Glance to fix it.", action: .relaunch)
@@ -162,6 +176,11 @@ struct Problem: Equatable {
         check(classify(VoiceError.nothingHeard.localizedDescription).title == VoiceError.nothingHeard.localizedDescription,
               "problem: short friendly notices pass through")
         check(classify(String(repeating: "x", count: 200)).detail?.count == 200, "problem: long unknown text goes to details")
+        check(classify("Cancelled. Nothing was sent.").severity == .info, "problem: Cancel is informational")
+        check(classify("Local only is on, so Glance didn't contact api.deepseek.com.").title == "Kept on this Mac"
+              && classify("Local only is on, so Glance didn't contact api.deepseek.com.").detail?.contains("deepseek") == true,
+              "problem: Local-only gate refusal")
+        check(classify("Apple's on-device model isn't available (model not ready).").action == .settings, "problem: no on-device model")
         check(memory(.recording) == nil && memory(.skipping("Glance itself")) == nil, "problem: no memory chip while recording")
         check(memory(.skipping("password field"))?.hint.contains("password") == true && memory(.paused)?.title == "Memory paused"
               && memory(.off("needs Screen Recording permission"))?.action == .permissions, "problem: memory paused / not saving / off")
