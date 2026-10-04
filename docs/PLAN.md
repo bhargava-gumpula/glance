@@ -156,3 +156,14 @@ glance/
 - **Latency:** stream text and speech, draw the highlight immediately, downscale images.
 - **Text-only providers (e.g. some DeepSeek models):** use the OCR-text fallback, and keep Claude as the default for demos.
 - **Imperfect redaction:** said honestly in the pitch. Exclusions and local-only mode are the backstop.
+
+### Phase 9: Agent mode, Glance does tasks on screen (AFTER a working MVP; not started)
+Added by the owner on 2026-10-03. Starts only once Phases 2–8 work end to end and the owner calls it an MVP.
+- **What:** Glance can carry out tasks itself: move the mouse, click, type, switch apps and windows, use menus. This extends the plan's original "Do" mode beyond saving files.
+- **Builds on:** Guide's AX snapshot and locator (Phase 5/6). The same "find the exact control" machinery, plus actions (AXPress, CGEvent mouse and keys).
+- **Must have, from day one:**
+  - an always-visible "Glance is in control" indicator, and a kill switch (Esc / ⌥Space stops instantly)
+  - a plan preview the user approves before acting, and step-by-step confirmation for anything irreversible (send, submit, delete, purchase, post)
+  - it never types passwords or payment details and never acts in excluded apps (same exclusions as memory)
+  - every action logged, and the same privacy rules for anything sent to the model
+- The scope and design get a brief like the Phase 5 one (judge panel) when the owner opens it.
