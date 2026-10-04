@@ -298,14 +298,15 @@ final class ChatModel: ObservableObject {
             guard !Task.isCancelled else { return }
             // A new selection while waiting: this question belongs to the old one.
             guard capture == source else { return }
-            if history.isEmpty, let p = packet, p.memory.isEmpty, let timeline { // memory joins the first question only
-                let terms = Timeline.terms(from: [question, p.raw.selectedText])
+            // Recent activity joins every conversation; follow-ups refresh it when new pages were stored since.
+            if let timeline {
                 let since = Date().timeIntervalSince1970 - Double(Config.retentionMinutes * 60)
-                let found = (try? timeline.snippets(matching: terms, since: since,
-                                                     fillRecent: Timeline.refersToEarlier(question))) ?? []
-                let withMemory = p.withMemory(found)
-                packet = withMemory
-                capture = Task { withMemory } // follow-ups resend the same memory
+                if let rows = try? timeline.recent(since: since), let newest = rows.first?.ts, newest > (packet?.memoryNewest ?? 0),
+                   let built = MemoryContext.build(rows: rows) {
+                    let withMemory = (packet ?? .memoryOnly()).withMemory(built)
+                    packet = withMemory
+                    capture = Task { withMemory }
+                }
             }
             let reveal = revealed || Redactor.userAskedToReveal(question)
             let target = (provider.name, provider.supportsImages)
@@ -315,14 +316,23 @@ final class ChatModel: ObservableObject {
             let answer = ContextPacket.send(packet, history: history, question: question, reveal: reveal,
                                             announce: announce, mode: mode, provider: provider) { preview in
                 var text = "Sending to \(preview.providerName): "
-                text += preview.imagesSent ? "an image of your selection, and the text below." : "the selection’s text only (image stays on this Mac)."
+                if preview.image == nil && preview.selectedText.isEmpty {
+                    text += "your question" + (preview.memory.isEmpty ? "." : " and your recent activity (text).")
+                } else {
+                    text += preview.imagesSent ? "an image of your selection, and the text below." : "the selection’s text only (image stays on this Mac)."
+                }
                 if preview.revealed {
                     text += "\n⚠️ Not redacted: you asked Glance to look at hidden data (until your next selection)."
                 } else {
                     text += preview.redactions > 0 ? "\n🔒 Hid \(preview.redactions) sensitive item(s)." : "\nNo sensitive items found."
                 }
-                text += "\nSelected text:\n" + (preview.selectedText.isEmpty ? "(none found)" : preview.selectedText)
-                if !preview.memory.isEmpty { text += "\n\nFrom your last \(Config.retentionMinutes) min (redacted):\n" + preview.memory }
+                if preview.image != nil || !preview.selectedText.isEmpty {
+                    text += "\nSelected text:\n" + (preview.selectedText.isEmpty ? "(none found)" : preview.selectedText)
+                }
+                if !preview.memory.isEmpty {
+                    text += "\n\n🧠 Memory included: \(preview.memoryPages) page(s) from \(preview.memoryApps) app(s), "
+                        + "\(preview.memory.count.formatted()) characters, last \(Config.retentionMinutes) min (redacted):\n" + preview.memory
+                }
                 turns.append(Turn(kind: .preview, text: text, image: preview.image))
             }
             turns.append(Turn(kind: .assistant, text: ""))

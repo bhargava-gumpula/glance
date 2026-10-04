@@ -53,9 +53,9 @@ enum Config {
     static let memoryMaxCaptureDimension = 1920.0
     /// Longest side of the stored thumbnail. Full frames are never stored.
     static let thumbnailMaxDimension = 320
-    /// At most this many earlier windows, and characters per window, go into a question.
-    static let memorySnippetLimit = 6
-    static let memorySnippetChars = 700
+    /// Most characters of recent activity sent with a question (activity log + page text). About 15k tokens:
+    /// fits DeepSeek's context with room to spare. Over budget, the oldest pages shrink to their key lines.
+    static var memoryContextMaxChars: Int { value("memoryContextMaxChars", default: 60_000) }
     /// Browsers: private-window and URL checks apply to these.
     static let browsers: Set<String> = [
         "com.apple.Safari", "com.apple.SafariTechnologyPreview", "com.google.Chrome", "com.microsoft.edgemac",

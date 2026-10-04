@@ -113,6 +113,13 @@ Built so far:
 - [ ] A Safari private window adds zero rows (private detection is UNVERIFIED; see below).
 - [ ] CPU: `top -pid $(pgrep -x Glance) -l 20 -s 3 | grep -E '^ *[0-9]+ +Glance'` while browsing, and while idle.
 
+### Memory context and the "no MacBooks in memory" bug (owner report)
+- **Root cause:** the MacBook pages *were* stored (rows 17:38–17:41 in the owner's timeline: MacBook Pro, Mac, Mac mini pages in Aside). Memory was attached only to a question that had a drag-box selection (`if let p = packet`); the owner asked by voice without pointing, so no memory was sent at all. The quiet 17:41:19–17:43:20 stretch was the same-text rule (one static page while talking), not skipped captures.
+- **Now:** every question carries the recent activity (`Memory/MemoryContext.swift`): an activity log plus the de-duplicated text of every page in the last 10 min, budget `Config.memoryContextMaxChars` (60k), redacted as one block, shown in the preview ("🧠 Memory included: N pages from M apps, X characters"). A question with no selection sends just the question and the memory. Follow-ups refresh it when new pages were stored.
+- **Skips are logged:** `log stream --predicate 'subsystem == "ie.dublinhacx.glance"' --info` shows "memory: not stored (reason) app … window …" once per change.
+- **Unreadable browser URL:** now stored without a URL (owner decision), unless the window shows private markers or its title is blocked.
+- **Not done:** an on-device model (FoundationModels) gist. The gist is extractive (prices, specs, chips); the full page text goes along anyway.
+
 ### Memory timing (owner request)
 - Check every **1 s** (`Config.checkIntervalSeconds`): exclusions first, then capture + OCR of the focused window on every check; the unchanged-frame skip and the OCR backoff are gone.
 - Snapshot every **3 s** (`Config.snapshotIntervalSeconds`): the most recent read is stored, unless its text is identical to the last row for the same window.

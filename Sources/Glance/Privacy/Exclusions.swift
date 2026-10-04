@@ -25,7 +25,6 @@ enum Exclusions {
         guard Config.browsers.contains(id) else { return nil }
         if w.isPrivate != false { return "private window" }
         if isBlocked(url: w.url, title: w.title) { return "blocked site" }
-        if w.url == nil { return "unknown page" } // can't check the blocklist without a URL
         return nil
     }
 

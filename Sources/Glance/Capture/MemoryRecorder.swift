@@ -79,6 +79,16 @@ final class MemoryRecorder {
     }
 
     /// State changes from a capture only count if nothing (pause, forget) happened since it started.
+    /// Logs why a check stored nothing: once per change of reason or window. App and reason are public; the window
+    /// title is private (redacted in the log unless private data logging is on). Never page text.
+    private var lastSkip = ""
+    private func noteSkip(_ reason: String, _ w: Exclusions.Window) {
+        let key = "\(reason)|\(w.bundleID ?? "")|\(w.title ?? "")"
+        guard key != lastSkip else { return }
+        lastSkip = key
+        log.notice("memory: not stored (\(reason, privacy: .public)) app \(w.bundleID ?? "none", privacy: .public) window \(w.title ?? "", privacy: .private)")
+    }
+
     private func report(_ s: State, generation g: Int) {
         if g == generation, !paused { state = s }
     }
@@ -89,15 +99,15 @@ final class MemoryRecorder {
         if ticks % 60 == 0 { trim(timeline) } // rolling deletion about once a minute, paused or not
         if let since = busySince {
             guard Date().timeIntervalSince(since) > 15 else { return }
-            log.error("memory: a capture hung for 15 s; starting over")
+            log.error("memory: a check hung for 15 s; starting over")
             cachedWindow = nil
         }
         guard !paused, !suspended else { return }
         if ProcessInfo.processInfo.isLowPowerModeEnabled, ticks % 3 != 0 { return }
         guard CGPreflightScreenCaptureAccess() else { state = .off("needs Screen Recording permission"); return }
         let (app, window, axWindow) = ActiveApp.current()
-        if let reason = Exclusions.memorySkipReason(window) { state = .skipping(reason); return }
-        guard let app, let axWindow else { return }
+        if let reason = Exclusions.memorySkipReason(window) { state = .skipping(reason); noteSkip(reason, window); return }
+        guard let app, let axWindow else { noteSkip("no focused window", window); return }
         let g = generation
         busySince = Date()
         Task {
@@ -115,6 +125,7 @@ final class MemoryRecorder {
         let started = Date()
         guard let scWindow = try await scWindow(pid: app.processIdentifier, title: window.title, axWindow: axWindow) else {
             report(.skipping("window not found"), generation: g)
+            noteSkip("window not found", window)
             return
         }
         let filter = SCContentFilter(desktopIndependentWindow: scWindow)
@@ -132,9 +143,12 @@ final class MemoryRecorder {
         // Re-check after the capture: the user may have tabbed into a password field or switched windows meanwhile.
         let (nowApp, nowWindow, nowAX) = ActiveApp.current()
         guard g == generation, !paused else { return }
-        if let reason = Exclusions.memorySkipReason(nowWindow) { state = .skipping(reason); return }
+        if let reason = Exclusions.memorySkipReason(nowWindow) { state = .skipping(reason); noteSkip(reason, nowWindow); return }
         guard nowApp?.processIdentifier == app.processIdentifier, nowWindow.title == window.title,
-              nowWindow.url == window.url, let nowAX, CFEqual(nowAX, axWindow) else { return }
+              nowWindow.url == window.url, let nowAX, CFEqual(nowAX, axWindow) else {
+            noteSkip("window changed during capture", window)
+            return
+        }
 
         let appName = app.localizedName ?? window.bundleID ?? "App"
         let read = try await Task.detached(priority: .utility) { () -> (text: String, ocr: Double) in
@@ -146,9 +160,13 @@ final class MemoryRecorder {
         guard g == generation, !paused else { return }
         state = .recording
         // Every check reads; only one read per snapshot interval is stored, and never a duplicate of the last row.
-        guard snapshots.admit(key: key, text: read.text, now: Date()) else { return }
+        guard snapshots.admit(key: key, text: read.text, now: Date()) else { return } // between snapshots, or same text
         let thumb = await Task.detached(priority: .utility) { Self.thumbnail(frame) }.value
         guard g == generation, !paused else { return }
+        lastSkip = ""
+        if window.url == nil, window.isPrivate != nil, Config.browsers.contains(window.bundleID ?? "") {
+            noteSkip("stored without a URL (unreadable)", window)
+        }
         try timeline.insert(app: appName, bundleID: window.bundleID, title: window.title, url: window.url,
                             text: read.text, thumb: thumb)
         log.notice("memory: stored a snapshot (OCR \(read.ocr, format: .fixed(precision: 2), privacy: .public) s, check \(Date().timeIntervalSince(started), format: .fixed(precision: 2), privacy: .public) s)")
