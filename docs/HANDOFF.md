@@ -137,3 +137,6 @@ Built so far:
 - Safari URL via `AXDocument`/`AXWebArea AXURL` is UNVERIFIED; without a URL, the blocklist still checks the window title.
 - `IsSecureEventInputEnabled()` is system-wide: an app that leaves Secure Keyboard Entry on (Terminal's option, some password managers) pauses memory; the menu shows "not saving (password field)".
 - This shell had no Accessibility or Screen Recording grant, so the live recorder wasn't run by the agent.
+
+## Tested build (owner-confirmed, 2026-10-03 18:15)
+`main` = the combined build: Phase 2 voice, Phase 3 memory (memory on every question, the activity log, full recent context), Pip, and audit fixes A1–A19. 253 selftests pass. The owner confirmed "this version works well". Claude via Azure is pending the deployment's provisioningState = Succeeded.
