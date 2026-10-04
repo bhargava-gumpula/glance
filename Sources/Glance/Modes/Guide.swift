@@ -253,6 +253,9 @@ enum GuideHighlight {
     }
 
     static func goHome() { pet?.goHome() }
+
+    /// Pip may be hidden until ⌥Space; a Guide session brings it on screen first.
+    static func begin() { pet?.show() }
 }
 
 /// Full-screen consent, through Phase 4's shared Send/Cancel step (the selftest swaps in a fake).
@@ -315,6 +318,7 @@ final class GuideSession {
         sends = 0
         consent = nil
         chat.mode = .guide
+        GuideHighlight.begin()
         GuideHighlight.show(nil, say: "Let me look at your screen…")
         runStep(userText: nil)
     }
