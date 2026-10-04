@@ -60,8 +60,12 @@ struct ContextPacket: Sendable {
 
     /// Adds (or replaces) the memory context, redacted here as one block before anything can reach `send()`.
     func withMemory(_ built: MemoryContext.Built) -> ContextPacket {
+        withMemory(built, redacted: Redactor.redact(built.text))
+    }
+
+    /// Same, with the redaction already done (off the main thread; it can take seconds on 20k characters).
+    func withMemory(_ built: MemoryContext.Built, redacted r: (text: String, hits: Int)) -> ContextPacket {
         var copy = self
-        let r = Redactor.redact(built.text)
         copy.memory = screenNow + r.text
         copy.memoryHits = screenNowHits + r.hits
         copy.memoryPages = built.pages

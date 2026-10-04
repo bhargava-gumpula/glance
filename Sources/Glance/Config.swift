@@ -99,7 +99,7 @@ enum Config {
     /// Phase 6 kill switch: false = Guide v1 (tap or "next"). `defaults write ie.dublinhacx.glance guideAutoRecheck -bool NO`
     static var guideAutoRecheck: Bool { value("guideAutoRecheck", default: true) }
     /// A question without a selection carries the front window's text; a memory row older than this is re-read.
-    static let screenNowMaxAge = 3.0
+    static let screenNowMaxAge = 5.0
     static let screenNowMaxChars = 6000
     /// Guide v2 re-says the current step after this long without progress.
     static let guideNudgeSeconds = 20.0

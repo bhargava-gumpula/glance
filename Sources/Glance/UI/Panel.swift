@@ -417,21 +417,34 @@ final class ChatModel: ObservableObject {
             guard !Task.isCancelled else { return }
             // A new selection while waiting: this question belongs to the old one.
             guard capture == source else { return }
+            let selectionSecs = Date().timeIntervalSince(began)
+            // Recent activity joins every conversation; follow-ups refresh it when new pages were stored since.
+            // Built and redacted off the main thread, while the screen is read.
+            let newestSeen = packet?.memoryNewest ?? 0
+            let memoryWork = timeline.map { tl in
+                Task.detached(priority: .userInitiated) { () -> (built: MemoryContext.Built, redacted: (text: String, hits: Int), secs: Double)? in
+                    let t0 = Date()
+                    let since = Date().timeIntervalSince1970 - Double(Config.retentionMinutes * 60)
+                    guard let rows = try? tl.recent(since: since), let newest = rows.first?.ts, newest > newestSeen,
+                          let built = MemoryContext.build(rows: rows) else { return nil }
+                    return (built, Redactor.redact(built.text), Date().timeIntervalSince(t0))
+                }
+            }
             // No selection: the front window's text (newest memory row, or a fresh read) joins the question. Text only.
+            let screenStart = Date()
             if !(packet?.hasSelection ?? false), let now = await ScreenNow.read(timeline: timeline) {
                 guard !Task.isCancelled, capture == source else { return }
                 packet = (packet ?? .memoryOnly()).withScreenNow(app: now.app, title: now.title, text: now.text)
             }
-            // Recent activity joins every conversation; follow-ups refresh it when new pages were stored since.
-            if let timeline {
-                let since = Date().timeIntervalSince1970 - Double(Config.retentionMinutes * 60)
-                if let rows = try? timeline.recent(since: since), let newest = rows.first?.ts, newest > (packet?.memoryNewest ?? 0),
-                   let built = MemoryContext.build(rows: rows) {
-                    let withMemory = (packet ?? .memoryOnly()).withMemory(built)
-                    packet = withMemory
-                    capture = Task { withMemory }
-                }
+            let screenSecs = Date().timeIntervalSince(screenStart)
+            let memory = await memoryWork?.value
+            guard !Task.isCancelled, capture == source else { return }
+            if let memory {
+                let withMemory = (packet ?? .memoryOnly()).withMemory(memory.built, redacted: memory.redacted)
+                packet = withMemory
+                capture = Task { withMemory }
             }
+            log.notice("prep: selection \(selectionSecs, format: .fixed(precision: 2), privacy: .public) s, screen now \(screenSecs, format: .fixed(precision: 2), privacy: .public) s, memory \(memory?.secs ?? 0, format: .fixed(precision: 2), privacy: .public) s (in parallel with the screen)")
             let reveal = revealed || Redactor.userAskedToReveal(question)
             let target = (provider.name, provider.supportsImages)
             let announce = history.isEmpty || (reveal && !revealed) || Self.needsPreview(first: previewedFor, now: target)

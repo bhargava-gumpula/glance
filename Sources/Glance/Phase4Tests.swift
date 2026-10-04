@@ -80,6 +80,7 @@ enum Phase4Tests {
 
         localOnly(check)
         providerSpeed(check)
+        sayFirst(check)
         speechInventory(check)
         mockBank(check)
         networkGate(check)
@@ -155,6 +156,29 @@ enum Phase4Tests {
         }
         check(events == 4, "speed: SSE text arrives event by event, not at the end  → \(events ?? -1) events")
         check(Mode.explain.system.contains("Start every reply with one line: \"Say: \""), "speed: the model is told to put the Say line first")
+    }
+
+    /// Owner log (grok-4.6): the "Say:" line counted as done only at the very end, so the panel stayed empty and
+    /// speech waited. The spoken line now ends at its second sentence even without a line break.
+    private static func sayFirst(_ check: (Bool, String) -> Void) {
+        let oneLine = "Say: Yes, 16 GB is plenty for college. It handles notes and coding fine. In detail, the MacBook Air has"
+        check(Voice.splitSpoken(oneLine) == .summary(say: "Yes, 16 GB is plenty for college. It handles notes and coding fine.",
+                                                     done: true, shown: "In detail, the MacBook Air has"),
+              "say first: a one-line answer's Say part ends after two sentences  → \(Voice.splitSpoken(oneLine))")
+        check(Voice.splitSpoken("Say: Yes, 1.5 GB is fine. More") == .summary(say: "Yes, 1.5 GB is fine. More", done: false, shown: ""),
+              "say first: a decimal point isn't a sentence end; one sentence keeps streaming")
+        // Speech starts at the first finished sentence, before the stream ends.
+        let tts = RecordTTS()
+        let first = MainActor.assumeIsolated { () -> [String] in
+            let sp = Speaker()
+            sp.begin(tts)
+            for cut in stride(from: 6, through: oneLine.count, by: 7) { _ = sp.answer(String(oneLine.prefix(cut))) }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            return tts.spoken
+        }
+        check(first.first == "Yes, 16 GB is plenty for college.", "say first: speech starts mid-stream  → \(first)")
+        check(Mode.explain.system.hasPrefix("Start every reply with one line: \"Say: \""), "say first: the Say rule opens the prompt")
+        check(Config.screenNowMaxAge == 5, "prep: a memory row up to 5 s old stands in for a fresh screen read")
     }
 
     /// Scope 3: local-only mode routes AI and voice to this Mac, and the gate refuses everything else.
@@ -316,4 +340,13 @@ private final class StubSSE: URLProtocol {
         client?.urlProtocolDidFinishLoading(self)
     }
     override func stopLoading() {}
+}
+
+/// Records what would be spoken.
+private final class RecordTTS: TextToSpeech, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _spoken: [String] = []
+    var spoken: [String] { lock.withLock { _spoken } }
+    func speak(_ text: String, firstAudio: @escaping @Sendable () -> Void) async throws { lock.withLock { _spoken.append(text) }; firstAudio() }
+    func stop() {}
 }
