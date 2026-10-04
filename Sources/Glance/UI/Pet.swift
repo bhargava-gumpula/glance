@@ -250,8 +250,9 @@ struct PetView: View {
     @AppStorage("localOnly") private var localOnly = false
 
     nonisolated static func lastReply(in turns: [ChatModel.Turn]) -> ChatModel.Turn? {
-        // Phase 8: info notices ("Using Mac voice") stay in the panel, so they don't replace the answer in the bubble.
-        turns.last { $0.kind == .assistant || ($0.kind == .notice && Problem.classify($0.text).severity != .info) }
+        // Owner rule: Pip's bubble shows only answers (their Say line), Guide steps and Send/Cancel.
+        // Notices, errors and status stay in the panel.
+        turns.last { $0.kind == .assistant }
     }
 
     /// The part of a raw answer that is read aloud: its "Say:" line, or the answer itself without one.
@@ -265,11 +266,11 @@ struct PetView: View {
 
     /// Bubble text: status while listening/thinking; otherwise `say()` text unless a newer reply came,
     /// then the reply's spoken line (the panel shows the full answer), unless the user closed it.
-    nonisolated static func bubbleText(state: PetState, transcribing: Bool, said: (text: String, after: UUID?)?,
+    nonisolated static func bubbleText(state: PetState, said: (text: String, after: UUID?)?,
                                        reply: (id: UUID, text: String)?, spoken: String?, dismissed: UUID?) -> String? {
         switch state {
         case .listening: return "Listening…"
-        case .thinking: return transcribing ? "Got it…" : "Thinking…"
+        case .thinking: return "Thinking…"
         default:
             if let said, said.after == reply?.id { return said.text }
             guard let reply, reply.id != dismissed else { return nil }
@@ -303,7 +304,7 @@ struct PetView: View {
                     .frame(width: 260, height: max(0, l.bubbleBelow ? w.height - spriteTop - s.height - 6 : spriteTop - 6),
                            alignment: Alignment(horizontal: tailRight ? .trailing : .leading, vertical: l.bubbleBelow ? .top : .bottom))
                     .offset(x: bubbleX, y: l.bubbleBelow ? spriteTop + s.height + 6 : 0)
-            } else if let bubble = Self.bubbleText(state: state, transcribing: chat.transcribing, said: model.said,
+            } else if let bubble = Self.bubbleText(state: state, said: model.said,
                                             reply: reply.map { ($0.id, $0.kind == .notice ? Problem.classify($0.text).bubble : $0.text) }, spoken: spoken, dismissed: model.dismissed) {
                 PetBubbleView(text: bubble, tailOnRight: tailRight) { model.dismissed = reply?.id; model.said = nil }
                     .frame(width: 260, height: max(0, l.bubbleBelow ? w.height - spriteTop - s.height - 6 : spriteTop - 6),
@@ -357,7 +358,7 @@ struct PetView: View {
         // Bubble text, A16 and say().
         let a = UUID(), b = UUID()
         func text(_ said: (text: String, after: UUID?)?, _ reply: (id: UUID, text: String)?, _ spoken: String?, _ dismissed: UUID?) -> String? {
-            bubbleText(state: .idle, transcribing: false, said: said, reply: reply, spoken: spoken, dismissed: dismissed)
+            bubbleText(state: .idle, said: said, reply: reply, spoken: spoken, dismissed: dismissed)
         }
         check(text(nil, (a, "Full answer"), "Short", nil) == "Short", "pet: bubble shows the spoken line, not the full answer")
         check(text(nil, (a, "Full answer"), nil, nil) == "Full answer", "pet: bubble falls back to the reply text")
@@ -365,7 +366,7 @@ struct PetView: View {
         check(text(nil, (b, "Newer"), nil, a) == "Newer", "pet A16: the next answer shows again")
         check(text(("Click Export", a), (a, "Old"), nil, nil) == "Click Export", "pet: say() text shows")
         check(text(("Click Export", a), (b, "New answer"), nil, nil) == "New answer", "pet: a newer answer replaces say() text")
-        check(bubbleText(state: .listening, transcribing: false, said: ("x", nil), reply: nil, spoken: nil, dismissed: nil) == "Listening…",
+        check(bubbleText(state: .listening, said: ("x", nil), reply: nil, spoken: nil, dismissed: nil) == "Listening…",
               "pet: listening status wins")
     }
 }
