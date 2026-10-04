@@ -24,6 +24,13 @@ struct ContextPacket: Sendable {
     var memoryPages = 0, memoryApps = 0, memoryHits = 0
     /// Newest timeline row in `memory`; follow-ups rebuild it when something newer was stored.
     var memoryNewest = 0.0
+    /// Guide (local only, never sent): OCR lines with redacted text and pixel boxes (top-left, top to bottom),
+    /// the captured area in Cocoa global points, and the shot's size in pixels.
+    var lines: [OCR.Line] = []
+    var region: CGRect = .zero
+    var imageSize: CGSize = .zero
+    /// Guide's user message; "{GOAL}" is replaced by the (redacted) question.
+    var guideBlock: String?
 
     /// For a question asked without pointing at anything: memory only, no selection, no image.
     static func memoryOnly() -> ContextPacket {
@@ -117,6 +124,10 @@ struct ContextPacket: Sendable {
     }
 
     func firstMessage(_ content: Content, question: String, imagesAllowed: Bool) -> ChatMessage {
+        if let guideBlock {
+            return ChatMessage(role: .user, text: guideBlock.replacingOccurrences(of: "{GOAL}", with: question),
+                               images: imagesAllowed && !content.selectionImage.isEmpty ? [content.selectionImage] : [])
+        }
         let pointed = !content.selectionImage.isEmpty
         var text = pointed
             ? "App: \(appName)\nText in my selection (OCR):\n\(content.selectedText.isEmpty ? "(none)" : content.selectedText)\n"
@@ -166,22 +177,27 @@ struct ContextPacket: Sendable {
         return try await Task.detached(priority: .userInitiated) {
             var hits = 0
             var blackout: [CGRect] = []
-            var selected: [String] = [], rawSelected: [String] = []
-            let lines = try OCR.lines(in: shot)
+            var selected: [String] = [], rawSelected: [String] = [], kept: [OCR.Line] = []
+            let lines = try OCR.lines(in: shot, words: true)
             for (line, r) in zip(lines, Redactor.redactLines(lines.map(\.text))) {
                 if r.hits > 0 { hits += r.hits; blackout.append(line.box.insetBy(dx: -4, dy: -4)) }
                 selected.append(r.text)
                 rawSelected.append(line.text)
+                kept.append(OCR.Line(text: r.text, box: line.box, words: r.hits > 0 ? [] : line.words))
             }
             let redacted = try draw(shot, size: size) { ctx in
                 ctx.setFillColor(.black)
                 for box in blackout { ctx.fill(flip(box, height: size.height)) }
             }
-            return ContextPacket(
+            var packet = ContextPacket(
                 appName: appName,
                 redacted: Content(selectionImage: try jpeg(redacted), selectedText: selected.joined(separator: "\n")),
                 raw: Content(selectionImage: try jpeg(shot), selectedText: rawSelected.joined(separator: "\n")),
                 redactions: hits)
+            packet.lines = kept.sorted { $0.box.minY < $1.box.minY }
+            packet.region = selection
+            packet.imageSize = size
+            return packet
         }.value
     }
 

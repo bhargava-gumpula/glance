@@ -76,6 +76,26 @@ enum Config {
     /// Window or toolbar text that marks a private window.
     static let privateWindowMarkers = ["private browsing", "incognito", "inprivate", "private window"]
 
+    // MARK: Guide (Phase 5)
+
+    /// Menus Guide never lists (history, recent files, other people's names; Window lists open documents).
+    static let guideSkippedMenus: Set<String> = [
+        "open recent", "history", "bookmarks", "recently closed", "services", "profiles", "people", "window",
+    ]
+    static let guideMaxMenuItems = 400
+    static let guideMaxControls = 150
+    static let guideMaxOCRLines = 250
+    /// Every Guide AX call gives up after this long, so a hung app can't freeze Glance.
+    static let axTimeout: Float = 0.25
+    static let guideDebounce = 0.6
+    /// Seconds before a slow model reply counts as failed.
+    static let guideProviderTimeout = 8.0
+    /// Sends per Guide session before consent is asked again; consent also lapses after `guideConsentMinutes`.
+    static let guideMaxSends = 20
+    static let guideConsentMinutes = 10.0
+    /// Phase 6 kill switch (unused in v1).
+    static let guideAutoRecheck = true
+
     // MARK: AI providers
 
     struct ProviderPreset: Sendable {

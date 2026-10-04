@@ -34,3 +34,5 @@ Each open decision has a working default and exactly one place to change it.
 | "Do" actions | save comparison only | `Modes/Do.swift` (Phase 7) |
 | Visual style | system default | `UI/` (Phase 8) |
 | Demo sites and Guide app | Safari product pages; export-to-PDF flow | docs/PLAN.md, Demo |
+| Guide (Phase 5) | AX-first, one step per model call, ids M#/A#/O#, menu hops followed locally; whole screen under the mouse (minus Glance and excluded apps) after one Send/Cancel per session; never clicks | `Modes/Guide.swift`, `Capture/AX.swift`, `Config.guide*` |
+| Guide: masking background windows | Deferred until after the demo: an app-only / window-level `SCContentFilter` that also hides private or blocked browser windows behind the target app | `ContextPacket.captureScreen` |

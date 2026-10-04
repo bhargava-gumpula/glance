@@ -338,7 +338,7 @@ private final class RingWindow {
         w.isOpaque = false
         w.hasShadow = false
         w.ignoresMouseEvents = true
-        w.level = .floating
+        w.level = NSWindow.Level(rawValue: NSWindow.Level.popUpMenu.rawValue + 1) // above open menus (Guide)
         w.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         w.isReleasedWhenClosed = false
         w.contentView = NSHostingView(rootView: Rectangle()

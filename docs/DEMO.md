@@ -30,7 +30,7 @@ Do not use the Lenovo `.../thinkpad-x1-carbon-gen-13-.../len101t0100` link: it r
 
 **3. Learning (1:15-2:00)**
 "Now I need to hand in my assignment as a PDF." Hold the hotkey: "Show me how to export this as a PDF."
-Guide app: **Pages** is installed (`/Applications/Pages Creator Studio.app`; Keynote and Numbers too). Have a short document open in Pages. Highlights should walk: **File menu, Export To, PDF..., Next, Save**. (Pages menu labels are from memory; open it once beforehand and correct this line.)
+Guide app: **Pages** is installed (`/Applications/Pages Creator Studio.app`; Keynote and Numbers too). Have a short document open in Pages. Highlights should walk: **File menu, Export To, PDF..., Next, Save**. (Pages menu labels are from memory; open it once beforehand and correct this line.) Guide asks Send/Cancel once before the first full-screen send: tap Send, it's the privacy moment. Opening File moves Pip down the path on its own; for Next… and Export, tap ⌥Space or say "next".
 Reliable fallback: **TextEdit** (`/System/Applications/TextEdit.app`): File, Export as PDF..., choose a name, Save.
 Optional (if v2 is built): click the wrong menu on purpose and let Glance correct her.
 
