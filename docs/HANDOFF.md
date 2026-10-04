@@ -143,6 +143,7 @@ Built so far:
 - **Error states** (`UI/Problem.swift`): `Problem.classify` turns the existing notice strings into designed cards (title, hint, fix button, "Details" with the raw text): no key, key for another address, offline, Azure deployment not ready, 401/403, 404, 429, 5xx, permission missing, Mac voice (info), ElevenLabs hiccup, OCR unavailable (Relaunch button). Memory paused / not saving (with the reason) / off shows as a chip under the status. Pip's bubble shows the friendly line; info notices (Mac voice) stay out of the bubble. ChatModel logic unchanged (one display-only `memoryState`).
 - **Icon:** `AppIcon` renders an 8-bit penguin from Pip's own grid; `Glance --make-iconset <dir>` writes the PNGs and `build-app.sh` runs `iconutil` into `Contents/Resources/AppIcon.icns` (`CFBundleIconFile`). The menu-bar glyph is a 16×16 template penguin with a badge: none = recording, bars = paused, "!" = not saving, slash = off.
 - **Panel:** answers render headings, fenced code (monospaced, horizontal scroll, Copy) and pipe tables (`UI/AnswerView.swift`); bullets; red Stop button; "Latest" scroll-to-bottom button; streaming only auto-scrolls while you're at the bottom; capsule follow-ups.
+- **Pip visibility (owner request):** no idle corner Pip. `PetController.shouldShow` = Glance shown (`appear()`) or listening or speaking or `keepVisible()` (Phase 5 sets it to `chat.guide.active`). Hiding Glance calls `goHome()` then `disappear()`; `goHome()` now also calls `updateVisibility()`, so Pip leaves the screen when nothing keeps it. `show()`, `point()` and `say()` put Pip on screen. Reduce motion: appears at the corner, disappears in place.
 - Not done here (owned by Phase 4): Settings regroup, the Local-only badge, the Send/Cancel confirm card, the bigger preview.
 
 ### Phase 8 check (owner, needs `./scripts/build-app.sh` from `glance-phase8`)
@@ -150,6 +151,7 @@ Built so far:
 - [ ] Onboarding: `defaults delete ie.dublinhacx.glance onboardingSeen`, relaunch → Pip's 3-step welcome
 - [ ] Icon: `build/Glance.app` shows the penguin in Finder; the menu bar shows the penguin glyph; Pause Memory → bars badge
 - [ ] Error states: remove the key (or Wi-Fi off) and ask → designed card with "Open Settings" / "Details"
+- [ ] Pip: not on screen at launch; tap ⌥Space → centre → corner; hold → listening Pip; hide → gone; a spoken answer keeps Pip until it ends
 - [ ] Panel: ask for a table or code ("show the specs as a table") → table and code block; scroll up mid-answer → "Latest" button
 - OCR selftest note: the two OCR checks fail with `CRImageReaderError 1` while other worktrees run their selftests at the same time (main's binary failed the same way then). Run it alone.
 

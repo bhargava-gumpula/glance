@@ -28,8 +28,7 @@ final class PanelController {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.hidesOnDeactivate = false
         panel.contentView = NSHostingView(rootView: PanelView(chat: chat))
-        pet = PetController(chat: chat)
-        pet.show()
+        pet = PetController(chat: chat) // Phase 8: hidden until ⌥Space (appear())
 
         chat.onPoint = { [weak self] in self?.pointTool.start() }
         pointTool.onSelect = { [weak self] rect, screen in
@@ -51,6 +50,7 @@ final class PanelController {
         panel.orderOut(nil)
         pointTool.clear()
         pet.goHome()
+        pet.disappear()
     }
 
     var isVisible: Bool { panel.isVisible }
