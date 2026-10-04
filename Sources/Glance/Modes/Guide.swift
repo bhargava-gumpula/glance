@@ -5,8 +5,44 @@ import ApplicationServices
 enum Guide {
     // MARK: Pure helpers (selftested)
 
-    static func isRequest(_ q: String) -> Bool {
-        q.range(of: #"(?i)^\s*(show me how|how do i|how can i|walk me through|guide me|help me)\b"#, options: .regularExpression) != nil
+    static func isRequest(_ q: String) -> Bool { intent(q) != nil }
+
+    /// Lowercase, punctuation → spaces (apostrophes dropped), single spaces, leading fillers removed.
+    static func normalizeRequest(_ q: String) -> String {
+        let cleaned = q.lowercased().replacingOccurrences(of: "’", with: "'").replacingOccurrences(of: "'", with: "")
+            .map { $0.isLetter || $0.isNumber ? $0 : " " }
+        var words = String(cleaned).split(separator: " ").map(String.init)
+        let fillers: Set<String> = ["okay", "ok", "so", "um", "uh", "hmm", "hey", "hi", "glance", "pip", "please", "alright",
+                                    "right", "well", "now", "and", "then", "just", "yeah", "yes"]
+        let pairs: Set<String> = ["can you", "could you", "would you", "will you", "can u", "i want", "i need", "id like", "i would"]
+        while let first = words.first {
+            if fillers.contains(first) { words.removeFirst(); continue }
+            if words.count > 1, pairs.contains(words[0] + " " + words[1]) { words.removeFirst(2); continue }
+            break
+        }
+        return words.joined(separator: " ")
+    }
+
+    /// Which rule makes this a Guide request (for the log), or nil for Explain. Matches anywhere in the sentence.
+    static func intent(_ q: String) -> String? {
+        let t = " " + normalizeRequest(q) + " "
+        // Questions about meaning or choice stay with Explain even when phrased "how do I …".
+        let thinking = "(know|compare|decide|choose|understand|tell|pick|read|interpret|say|pronounce|spell|mean|feel|figure out if)"
+        let rules: [(String, String)] = [
+            ("show me how", #" show me (how|where) "#),
+            ("how do i", #" how (do|can|would|should|could) (i|you|we) (?!\#(thinking) )\w+"#),
+            ("how to", #" (how|way) to (?!\#(thinking) )\w+"#),
+            ("walk me through", #" (walk|take|talk) me through "#),
+            ("guide me", #" guide me "#),
+            ("help me do", #" help me (to )?(do|export|find|save|print|share|make|turn|change|open|get|use|set|add|create|convert|send|insert|format|remove|delete|rename|move|attach|upload|download|fix|change|switch|enable|disable) "#),
+            ("where do i click", #" where (do|can|should) i (click|find|go|tap|press|get) "#),
+            ("where is the button", #" (where is|where are|wheres) the [\w ]{0,30}(button|menu|option|setting|settings|tab|icon) "#),
+            ("which button", #" (what|which) (button|menu|option) "#),
+            ("what do i click", #" what (do|should) i (click|press|tap) "#),
+            ("teach me", #" teach me "#),
+            ("steps to", #" (steps|step by step) (to|for) "#),
+        ]
+        return rules.first { t.range(of: $0.1, options: .regularExpression) != nil }?.0
     }
 
     enum Command: Equatable { case next, why, skip, stop }
@@ -348,12 +384,14 @@ final class GuideSession {
         end()
         let app = Guide.targetApp()
         if let why = Guide.refusal(app) {
+            log.notice("guide: refused at start (\(app?.bundleIdentifier ?? "no app", privacy: .public))")
             chat.turns.append(.init(kind: .notice, text: why))
             GuideHighlight.show(nil, say: why)
             return
         }
         goal = q
         pid = app!.processIdentifier
+        log.notice("guide: session start (app \(app?.bundleIdentifier ?? "?", privacy: .public))")
         appName = app?.localizedName ?? "this app"
         progress = []
         stepNumber = 0

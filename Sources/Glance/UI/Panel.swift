@@ -308,7 +308,9 @@ final class ChatModel: ObservableObject {
     /// `spokenAt`: when the user released ⌥Space, for the release → first spoken word log.
     private func ask(_ question: String, shown: String, spokenAt: Date? = nil) {
         // Guide first, so no other mode can take over a "show me how" line. Inside a session, Guide replaces its own step.
-        let toGuide = Guide.isRequest(question) || guide.active || mode.name == Mode.guide.name
+        let rule = Guide.intent(question) ?? (guide.active ? "session active" : mode.name == Mode.guide.name ? "Guide chip" : nil)
+        let toGuide = rule != nil
+        log.notice("guide: route \(toGuide ? "guide" : "explain", privacy: .public) (\(rule ?? "no rule matched", privacy: .public))")
         if busy && !(toGuide && guide.active) { stop() } // a spoken question replaces the one being answered
         if toGuide {
             turns.append(Turn(kind: .user, text: shown))
@@ -419,6 +421,11 @@ struct PanelView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label("Glance · \(chat.mode.name)", systemImage: "eye").font(.headline)
+                Button { chat.mode = chat.mode.name == Mode.guide.name ? .explain : .guide } label: {
+                    Label("Guide", systemImage: chat.mode.name == Mode.guide.name ? "hand.point.up.left.fill" : "hand.point.up.left")
+                }
+                .help(chat.mode.name == Mode.guide.name ? "Your next question starts a step-by-step Guide. Click to go back to Explain"
+                      : "Step by step: Pip points at each button to click for your next question")
                 if localOnly { LocalOnlyBadge() }
                 Spacer()
                 Button { chat.muted.toggle() } label: {
