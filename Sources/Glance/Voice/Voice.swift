@@ -167,7 +167,22 @@ enum Voice {
         guard t.prefix(marker.count).lowercased() == marker else { return .plain }
         // The spoken line may also start on the next line ("**Say:**\nYes, …").
         let rest = t.dropFirst(marker.count).drop { $0.isWhitespace || wrap.contains($0) }
-        guard let nl = rest.firstIndex(where: \.isNewline) else { return .summary(say: String(rest), done: false, shown: "") }
+        guard let nl = rest.firstIndex(where: \.isNewline) else {
+            // Some models (grok-4.6) keep the whole answer on the "Say:" line: the spoken part ends at its 2nd sentence.
+            var ends = 0
+            var i = rest.startIndex
+            while i < rest.endIndex {
+                let next = rest.index(after: i)
+                if ".!?".contains(rest[i]), next < rest.endIndex, rest[next].isWhitespace {
+                    ends += 1
+                    if ends == 2 {
+                        return .summary(say: String(rest[...i]), done: true, shown: rest[next...].trimmingCharacters(in: .whitespaces))
+                    }
+                }
+                i = next
+            }
+            return .summary(say: String(rest), done: false, shown: "")
+        }
         return .summary(say: String(rest[..<nl]), done: true, shown: rest[nl...].trimmingCharacters(in: .whitespacesAndNewlines))
     }
 

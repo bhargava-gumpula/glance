@@ -119,7 +119,7 @@ enum Phase6Tests {
                     Timeline.Snippet(ts: 108, app: "Pages", title: "Essay", url: nil, text: "new"),
                     Timeline.Snippet(ts: 109, app: "Safari", title: "News", url: nil, text: "other")]
         check(ScreenNow.fromMemory(rows, app: "Pages", title: "Essay", now: 110)?.text == "new", "screen now: fresh memory row of the window used")
-        check(ScreenNow.fromMemory(rows, app: "Pages", title: "Essay", now: 112) == nil, "screen now: row older than 3 s → fresh read")
+        check(ScreenNow.fromMemory(rows, app: "Pages", title: "Essay", now: 114) == nil, "screen now: row older than 5 s → fresh read")
         check(ScreenNow.fromMemory(rows, app: "Pages", title: "Draft", now: 110) == nil, "screen now: another window's row not used")
         let built = MemoryContext.Built(text: "Activity log: Safari news", pages: 1, apps: 1, trimmedPages: 0, newest: 109)
         let sn = ContextPacket.memoryOnly().withScreenNow(app: "Pages", title: "Essay", text: "Card 4111 1111 1111 1111\nTotal due")
