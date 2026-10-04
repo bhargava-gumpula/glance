@@ -36,7 +36,7 @@ Optional (if v2 is built): click the wrong menu on purpose and let Glance correc
 
 **4. Privacy (2:00-2:20)**
 Run `open demo/mock-bank.html` (opens in the default browser; the page has a red DEMO banner). **Click Point and drag over the whole bank page** (the new selection resets the thread, so the preview appears). Hold ⌥Space: "Can you read this page?"
-Expect: the preview shows the card, IBAN, PPSN, email and password field blacked out, and Glance says "I hid N sensitive items" (being added in Phase 4, audit A20; cut the line if it isn't built). Then **click the eye menu → Forget Last 15 Minutes**. Forget has no voice command. Turn on local-only mode only if Ollama is installed and tested (`ollama pull qwen2.5vl`); otherwise just mention it, and don't ask a question in local-only mode on stage.
+Expect: the preview shows the card, IBAN, PPSN, email and password field blacked out, and the Send/Cancel card appears (show Cancel: nothing is sent). Then **click the eye menu → Forget Last 10 Minutes**. Forget has no voice command. Local-only mode uses Apple's on-device model (no Ollama needed): switch it on and ask one short question to show it still answers offline.
 
 **5. Close (2:20-2:30)**
 "Screenpipe remembers your screen. Glance helps you act on it, privately."
