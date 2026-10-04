@@ -79,8 +79,41 @@ enum Phase4Tests {
         check(consentCalls.n == 1 && consent.sent.isEmpty, "send(): a caller's confirm is always awaited; false sends nothing")
 
         localOnly(check)
+        speechInventory(check)
         mockBank(check)
         networkGate(check)
+    }
+
+    /// Owner rule: Glance speaks only the answer's "Say:" line (and Guide steps, Phase 5). Outside the speech engine
+    /// (Voice/) and Guide, the only speech call is `speaker.answer`; Pip's bubble ignores notices.
+    private static func speechInventory(_ check: (Bool, String) -> Void) {
+        let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        let files = (FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)?.allObjects as? [URL] ?? [])
+            .filter { $0.pathExtension == "swift" }
+            .filter { url in
+                let path = url.path
+                return !path.contains("/Voice/") && !path.contains("/Guide/") && !url.lastPathComponent.hasPrefix("Guide")
+                    && !["SelfTest.swift", "Phase4Tests.swift"].contains(url.lastPathComponent)
+            }
+        let speech = [".speak(", ".feed(", ".say(", "speaker.finish(", "AVSpeech", "NSSpeechSynthesizer", "speaker.begin(", "speaker.answer("]
+        var sites: [String] = []
+        for file in files {
+            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            for (n, line) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
+                let code = line.components(separatedBy: "//").first ?? ""
+                for p in speech where code.contains(p) { sites.append("\(file.lastPathComponent):\(n + 1) \(p)") }
+            }
+        }
+        let allowed = sites.filter { $0.hasPrefix("Panel.swift:") && ($0.hasSuffix("speaker.answer(") || $0.hasSuffix("speaker.begin(")) }
+        check(sites.count == allowed.count && allowed.contains { $0.hasSuffix("speaker.answer(") },
+              "speech inventory: outside Voice/ and Guide, only the answer's Say line is spoken  → \(sites.filter { !allowed.contains($0) })")
+        let id = UUID()
+        check(PetView.lastReply(in: [ChatModel.Turn(kind: .assistant, text: "Answer"), ChatModel.Turn(kind: .notice, text: "Using Mac voice."),
+                                     ChatModel.Turn(kind: .notice, text: "The provider returned HTTP 500.")])?.text == "Answer",
+              "speech inventory: Pip's bubble never shows notices or errors")
+        check(PetView.bubbleText(state: .thinking, said: nil, reply: nil, spoken: nil, dismissed: nil) == "Thinking…"
+              && PetView.bubbleText(state: .thinking, said: ("x", id), reply: nil, spoken: nil, dismissed: nil) == "Thinking…",
+              "speech inventory: no filler beyond Listening… / Thinking…")
     }
 
     /// Scope 3: local-only mode routes AI and voice to this Mac, and the gate refuses everything else.
