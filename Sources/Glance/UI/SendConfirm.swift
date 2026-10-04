@@ -64,11 +64,6 @@ final class SendConfirm: ObservableObject {
         return "Hid \(list). Send?"
     }
 
-    /// The fixed, local line spoken before an answer when anything was hidden. Never from the model.
-    nonisolated static func hidLine(_ n: Int) -> String? {
-        n > 0 ? "I hid \(n) sensitive item\(n == 1 ? "" : "s") before sending." : nil
-    }
-
     /// A spoken reply to the prompt: true = send, false = cancel, nil = not an answer.
     nonisolated static func spokenAnswer(_ text: String) -> Bool? {
         let words = text.lowercased().split { !$0.isLetter }.map(String.init)

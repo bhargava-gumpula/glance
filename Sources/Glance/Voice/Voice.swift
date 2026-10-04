@@ -435,15 +435,6 @@ final class Speaker {
         return shown
     }
 
-    /// Phase 4: a fixed local line (e.g. "I hid 3 sensitive items before sending.") spoken before the answer.
-    /// It doesn't use the answer's spoken-length budget.
-    func say(_ line: String) {
-        let s = Voice.speakable(line)
-        guard tts != nil, !s.isEmpty else { return }
-        queue.append(s)
-        if worker == nil { work() }
-    }
-
     func feed(_ delta: String) {
         guard tts != nil else { return }
         pending += delta
