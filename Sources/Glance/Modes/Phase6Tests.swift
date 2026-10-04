@@ -124,6 +124,13 @@ enum Phase6Tests {
         }
         check(chatEsc && !otherEsc, "hide chat: Esc in the chat panel doesn't stop Guide; elsewhere it still does")
 
+        // 7c. Pip remembers where it was dragged (UserDefaults, across launches)
+        let spot = UserDefaults(suiteName: "glance-selftest-\(getpid())")!
+        check(PetController.savedSpot(spot) == nil, "pip spot: nothing saved → centre")
+        PetController.saveSpot(CGPoint(x: 123, y: 456), spot)
+        check(PetController.savedSpot(spot) == CGPoint(x: 123, y: 456), "pip spot: a drag is remembered")
+        spot.removePersistentDomain(forName: "glance-selftest-\(getpid())")
+
         // 7b. Selection highlight: cleared when its answer is done, on a new question, hide or Stop; never Guide's ring
         let C = ChatModel.clearsHighlight
         check(!C(.answerSettled(busy: false, speaking: false), false, false), "highlight: kept until a question is asked")

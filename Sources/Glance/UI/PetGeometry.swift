@@ -29,7 +29,7 @@ enum PetGeometry {
     /// window is built around it, so Pip stays next to the target even at screen edges.
     /// Screen: the visible frame containing the target centre, else the largest overlap, else the nearest.
     static func placement(for target: CGRect, screens visibleFrames: [CGRect], window: CGSize, sprite: CGSize,
-                          gap: CGFloat) -> Layout {
+                          gap: CGFloat, field: CGFloat = 0) -> Layout {
         let c = CGPoint(x: target.midX, y: target.midY)
         func rank(_ f: CGRect) -> (Int, CGFloat, CGFloat) {
             let i = f.intersection(target)
@@ -48,19 +48,26 @@ enum PetGeometry {
                 s.y = target.maxY + gap + sprite.height <= vf.maxY ? target.maxY + gap : target.minY - gap - sprite.height
             }
         }
-        return layout(sprite: CGRect(origin: s, size: sprite), in: vf, window: window, pointLeft: pointLeft)
+        return layout(sprite: CGRect(origin: s, size: sprite), in: vf, window: window, pointLeft: pointLeft, field: field)
     }
 
-    /// Pip's home: the top-right corner of `vf` (the visible frame, so below the menu bar); the bubble flips below.
-    static func home(in vf: CGRect, window: CGSize, sprite: CGSize, inset: CGFloat = 16) -> Layout {
-        layout(sprite: CGRect(x: vf.maxX - inset - sprite.width, y: vf.maxY - inset - sprite.height, width: sprite.width, height: sprite.height),
-               in: vf, window: window, pointLeft: true)
+    /// Pip's home: where the user last dragged it (`saved`, the sprite's Cocoa global origin) if that spot is still on
+    /// a screen, else the centre of `vf` (the active screen's visible frame). The bubble flips to stay on screen.
+    static func home(saved: CGPoint?, screens visibleFrames: [CGRect], fallback vf: CGRect, window: CGSize, sprite: CGSize,
+                     field: CGFloat = 0) -> Layout {
+        if let p = saved {
+            let r = CGRect(origin: p, size: sprite)
+            if let s = visibleFrames.first(where: { $0.contains(CGPoint(x: r.midX, y: r.midY)) }) {
+                return layout(sprite: r, in: s, window: window, pointLeft: true, field: field)
+            }
+        }
+        return center(in: vf, window: window, sprite: sprite, field: field)
     }
 
-    /// Where Pip appears when Glance is shown, before it flies home: the centre of `vf`.
-    static func center(in vf: CGRect, window: CGSize, sprite: CGSize) -> Layout {
+    /// The centre of `vf`: Pip's home until the user drags it somewhere.
+    static func center(in vf: CGRect, window: CGSize, sprite: CGSize, field: CGFloat = 0) -> Layout {
         layout(sprite: CGRect(x: vf.midX - sprite.width / 2, y: vf.midY - sprite.height / 2, width: sprite.width, height: sprite.height),
-               in: vf, window: window, pointLeft: true)
+               in: vf, window: window, pointLeft: true, field: field)
     }
 
     /// True when `sprite` (Cocoa global) is no longer on any screen, e.g. after a display was unplugged.
@@ -68,13 +75,15 @@ enum PetGeometry {
         !screens.contains { $0.contains(CGPoint(x: sprite.midX, y: sprite.midY)) }
     }
 
-    /// Clamps the sprite into `vf`, then fits the window around it with the bubble above (or below near the top).
-    static func layout(sprite r: CGRect, in vf: CGRect, window: CGSize, pointLeft: Bool) -> Layout {
+    /// Clamps the sprite into `vf`, then fits the window around it. The bubble goes above the sprite and flips below
+    /// only when the bubble's room (`window.height - field - sprite`) doesn't fit above it on screen. `field` is the
+    /// strip on the other side of the sprite for Pip's one-line field (below Pip, or above it when the bubble flips).
+    static func layout(sprite r: CGRect, in vf: CGRect, window: CGSize, pointLeft: Bool, field: CGFloat = 0) -> Layout {
         let s = CGPoint(x: min(max(r.minX, vf.minX), vf.maxX - r.width), y: min(max(r.minY, vf.minY), vf.maxY - r.height))
-        let below = s.y + window.height > vf.maxY
+        let below = s.y + window.height - field > vf.maxY
         var x = min(max(s.x + r.width / 2 - window.width / 2, vf.minX), vf.maxX - window.width)
         x = min(max(x, s.x + r.width - window.width), s.x)
-        let y = below ? s.y + r.height - window.height : s.y
+        let y = below ? s.y + r.height + field - window.height : s.y - field
         return Layout(origin: CGPoint(x: x, y: y), sprite: CGPoint(x: s.x - x, y: s.y - y), pointLeft: pointLeft, bubbleBelow: below)
     }
 
@@ -133,12 +142,32 @@ enum PetGeometry {
         p = place(t, [main])
         check(sprite(p).minY == t.maxY + 8 && abs(sprite(p).midX - t.midX) < 1, "pet: full-width target puts Pip above it")
 
-        let h = home(in: main, window: win, sprite: spr)
-        check(sprite(h) == CGRect(x: 1304, y: 875 - 16 - 90, width: 120, height: 90) && h.pointLeft && h.bubbleBelow && fits(h)
-              && main.contains(CGRect(origin: h.origin, size: win)), "pet: home is the top-right corner, bubble below, window on screen")
         let c = center(in: main, window: win, sprite: spr)
         check(sprite(c) == CGRect(x: 660, y: 392.5, width: 120, height: 90) && fits(c), "pet: appears in the centre of the screen")
+        let h = home(saved: nil, screens: [main], fallback: main, window: win, sprite: spr)
+        check(h == c && !h.bubbleBelow && main.contains(CGRect(origin: h.origin, size: win)), "pet: home is the centre until dragged, bubble above")
+        let dragged = home(saved: CGPoint(x: 100, y: 200), screens: [main, rightScreen], fallback: main, window: win, sprite: spr)
+        check(sprite(dragged).origin == CGPoint(x: 100, y: 200) && fits(dragged), "pet: home is the dragged spot")
+        let onRight = home(saved: CGPoint(x: 2000, y: 300), screens: [main, rightScreen], fallback: main, window: win, sprite: spr)
+        check(sprite(onRight).origin == CGPoint(x: 2000, y: 300), "pet: dragged spot on a second display")
+        let gone = home(saved: CGPoint(x: 2000, y: 300), screens: [main], fallback: main, window: win, sprite: spr)
+        check(gone == c, "pet: dragged spot off every screen (display unplugged) → centre")
+        let top = home(saved: CGPoint(x: 600, y: 875 - 90), screens: [main], fallback: main, window: win, sprite: spr)
+        check(top.bubbleBelow && main.contains(sprite(top)), "pet: dragged to the top edge, bubble flips below")
+
+        // With the one-line field strip (Pip's real window): bubble above by default, field below Pip.
+        let pw = CGSize(width: 300, height: 310), f: CGFloat = 44
+        let pc = home(saved: nil, screens: [main], fallback: main, window: pw, sprite: spr, field: f)
+        check(!pc.bubbleBelow && pc.sprite.y == f && pc.spriteRect(spr) == sprite(c), "pet field: centre home, bubble above, field strip below Pip")
+        let high = home(saved: CGPoint(x: 600, y: 875 - 90 - 176), screens: [main], fallback: main, window: pw, sprite: spr, field: f)
+        check(!high.bubbleBelow, "pet field: bubble stays above while its room fits under the top edge")
+        let edge = home(saved: CGPoint(x: 600, y: 875 - 90 - 100), screens: [main], fallback: main, window: pw, sprite: spr, field: f)
+        check(edge.bubbleBelow && edge.sprite.y == pw.height - f - spr.height && edge.spriteRect(spr).origin == CGPoint(x: 600, y: 685),
+              "pet field: near the top edge the bubble flips below, the field goes above Pip")
+        let pointed = placement(for: CGRect(x: 400, y: 400, width: 200, height: 50), screens: [main], window: pw, sprite: spr, gap: 8, field: f)
+        check(!pointed.bubbleBelow && pointed.spriteRect(spr) == CGRect(x: 608, y: 380, width: 120, height: 90),
+              "pet field: pointing keeps the sprite beside the target, bubble above")
         check(isOffScreen(CGRect(x: 2000, y: 16, width: 120, height: 90), screens: [main])
-              && !isOffScreen(sprite(h), screens: [main]), "pet: home off every screen is detected")
+              && !isOffScreen(sprite(c), screens: [main]), "pet: home off every screen is detected")
     }
 }
