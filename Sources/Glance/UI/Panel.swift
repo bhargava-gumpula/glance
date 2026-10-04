@@ -40,6 +40,17 @@ final class PanelController {
         }
         pointTool.onCancel = { [weak self] in self?.focusInput() }
         pet.onTap = { [weak self] in self?.petTapped() }
+        GuideHighlight.pet = pet
+        GuideHighlight.avoid = { [weak self] in self?.avoid($0) }
+        Guide.startTracking()
+    }
+
+    /// Guide: move the chat to the other side of the screen when it covers what Pip points at.
+    func avoid(_ rect: CGRect) {
+        guard panel.isVisible, panel.frame.intersects(rect),
+              let vf = (NSScreen.screens.first { $0.frame.intersects(rect) } ?? NSScreen.main)?.visibleFrame else { return }
+        let x = rect.midX > vf.midX ? vf.minX + 16 : vf.maxX - panel.frame.width - 16
+        panel.setFrameOrigin(NSPoint(x: x, y: panel.frame.minY))
     }
 
     /// Clicking Pip opens the chat to message it (or hides the chat).
@@ -81,6 +92,7 @@ final class PanelController {
         holdTimer?.cancel()
         if Self.isTap(pressed: pressed, released: time) {
             chat.discardRecording()
+            if chat.guide.active { chat.guide.next(); return } // during a Guide session a tap means "next"
             toggle()
         } else {
             // The release can beat the hold timer; the question needs the panel either way.
@@ -161,7 +173,8 @@ final class ChatModel: ObservableObject {
     var onPoint: (() -> Void)?
     var timeline: Timeline?
 
-    let mode = Mode.explain
+    @Published var mode = Mode.explain
+    lazy var guide = GuideSession(chat: self)
     private var capture: Task<ContextPacket?, Never>?
     /// The user's own words and the answers; ContextPacket.send() redacts and attaches the selection.
     private var history: [ChatMessage] = []
@@ -281,6 +294,12 @@ final class ChatModel: ObservableObject {
     /// `spokenAt`: when the user released ⌥Space, for the release → first spoken word log.
     private func ask(_ question: String, shown: String, spokenAt: Date? = nil) {
         if busy { stop() } // a spoken question replaces the one being answered
+        // Guide first, so no other mode can take over a "show me how" line.
+        if Guide.isRequest(question) || guide.active || mode.name == Mode.guide.name {
+            turns.append(Turn(kind: .user, text: shown))
+            _ = guide.handle(question)
+            return
+        }
         serial += 1
         busy = true
         turns.append(Turn(kind: .user, text: shown))
