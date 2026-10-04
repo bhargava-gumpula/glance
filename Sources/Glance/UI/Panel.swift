@@ -97,8 +97,11 @@ final class PanelController {
         holdTimer?.cancel()
         if Self.isTap(pressed: pressed, released: time) {
             chat.discardRecording()
-            if chat.guide.active { chat.guide.next(); return } // during a Guide session a tap means "next"
-            toggle()
+            switch Self.tapAction(guideActive: chat.guide.active, panelVisible: panel.isVisible) {
+            case .guideNext: chat.guide.next() // during a Guide session a tap means "next"
+            case .hide: hide()
+            case .showToType: show(pointing: false); focusInput()
+            }
         } else {
             // The release can beat the hold timer; the question needs the panel either way.
             if !panel.isVisible { show(pointing: false) }
@@ -106,17 +109,20 @@ final class PanelController {
         }
     }
 
+    enum TapAction: Equatable { case guideNext, hide, showToType }
+
+    /// A ⌥Space tap never starts pointing; the Point button does.
+    nonisolated static func tapAction(guideActive: Bool, panelVisible: Bool) -> TapAction {
+        guideActive ? .guideNext : panelVisible ? .hide : .showToType
+    }
+
     nonisolated static func isTap(pressed: TimeInterval, released: TimeInterval) -> Bool {
         released - pressed < Config.holdToTalkSeconds
     }
 
-    /// ⌥Space: show the panel and start pointing, or hide everything.
+    /// Menu "Show Glance": like a tap, ready to type.
     func toggle() {
-        if panel.isVisible {
-            hide()
-        } else {
-            show(pointing: true)
-        }
+        if panel.isVisible { hide() } else { show(pointing: false); focusInput() }
     }
 
     private func show(pointing: Bool) {
@@ -157,7 +163,7 @@ final class ChatModel: ObservableObject {
     @Published var turns: [Turn] = []
     @Published var input = ""
     @Published var busy = false
-    @Published var status = "Drag a box over anything, then ask about it."
+    @Published var status = "Ask about what's on screen, or click Point to select part of it."
     /// Display only (Phase 8 memory chip).
     @Published var memoryState: MemoryRecorder.State = .recording
     /// Hold-to-talk: true while ⌥Space is held, `transcribing` until the text is back.
@@ -334,6 +340,11 @@ final class ChatModel: ObservableObject {
             guard !Task.isCancelled else { return }
             // A new selection while waiting: this question belongs to the old one.
             guard capture == source else { return }
+            // No selection: the front window's text (newest memory row, or a fresh read) joins the question. Text only.
+            if !(packet?.hasSelection ?? false), let now = await ScreenNow.read(timeline: timeline) {
+                guard !Task.isCancelled, capture == source else { return }
+                packet = (packet ?? .memoryOnly()).withScreenNow(app: now.app, title: now.title, text: now.text)
+            }
             // Recent activity joins every conversation; follow-ups refresh it when new pages were stored since.
             if let timeline {
                 let since = Date().timeIntervalSince1970 - Double(Config.retentionMinutes * 60)
@@ -355,7 +366,10 @@ final class ChatModel: ObservableObject {
                 confirming = preview.confirmPrompt != nil
                 var text = "Sending to \(preview.providerName): "
                 if preview.image == nil && preview.selectedText.isEmpty {
-                    text += "your question" + (preview.memory.isEmpty ? "." : " and your recent activity (text).")
+                    let screen = preview.memory.hasPrefix("On screen now")
+                    let recent = !preview.memory.isEmpty && !(screen && preview.memoryPages == 0)
+                    text += "your question" + (screen ? ", what's on screen now" : "") + (recent ? " and your recent activity" : "")
+                        + (preview.memory.isEmpty ? "." : " (text).")
                 } else {
                     text += preview.imagesSent ? "an image of your selection, and the text below." : "the selection’s text only (image stays on this Mac)."
                 }

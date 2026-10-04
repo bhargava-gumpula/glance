@@ -33,6 +33,26 @@ struct ContextPacket: Sendable {
     var guideBlock: String?
 
     /// For a question asked without pointing at anything: memory only, no selection, no image.
+    /// Redacted "what's on screen now" section for a question without a selection; `memory` starts with it, so the
+    /// preview, the Send/Cancel check and the redaction count all cover it.
+    private(set) var screenNow = ""
+    private var screenNowHits = 0
+    var hasSelection: Bool { !redacted.selectionImage.isEmpty }
+
+    /// Adds (or replaces) the front window's text, redacted here. Text only; never an image.
+    func withScreenNow(app: String, title: String?, text: String) -> ContextPacket {
+        var copy = self
+        let body = String(memory.dropFirst(screenNow.count))
+        let t = Redactor.redact(String(text.prefix(Config.screenNowMaxChars)))
+        let w = Redactor.redact(title ?? "")
+        let head = "On screen now (\(app)" + (w.text.isEmpty ? "" : " — \"\(w.text)\"") + "):\n"
+        copy.screenNow = head + t.text + "\n\n"
+        copy.screenNowHits = t.hits + w.hits
+        copy.memoryHits = memoryHits - screenNowHits + copy.screenNowHits
+        copy.memory = copy.screenNow + body
+        return copy
+    }
+
     static func memoryOnly() -> ContextPacket {
         let empty = Content(selectionImage: Data(), selectedText: "")
         return ContextPacket(appName: "", redacted: empty, raw: empty, redactions: 0)
@@ -42,8 +62,8 @@ struct ContextPacket: Sendable {
     func withMemory(_ built: MemoryContext.Built) -> ContextPacket {
         var copy = self
         let r = Redactor.redact(built.text)
-        copy.memory = r.text
-        copy.memoryHits = r.hits
+        copy.memory = screenNow + r.text
+        copy.memoryHits = screenNowHits + r.hits
         copy.memoryPages = built.pages
         copy.memoryApps = built.apps
         copy.memoryNewest = built.newest
@@ -132,9 +152,13 @@ struct ContextPacket: Sendable {
         var text = pointed
             ? "App: \(appName)\nText in my selection (OCR):\n\(content.selectedText.isEmpty ? "(none)" : content.selectedText)\n"
             : "I didn't point at anything on screen.\n"
-        if !memory.isEmpty {
+        if !screenNow.isEmpty {
+            text += "\nWhat's on my screen right now (front window, OCR, redacted):\n\(screenNow)"
+        }
+        let body = memory.dropFirst(screenNow.count)
+        if !body.isEmpty {
             text += "\nWhat I've been doing on this Mac in the last \(Config.retentionMinutes) min "
-                + "(Glance's on-device memory, redacted):\n\(memory)\n"
+                + "(Glance's on-device memory, redacted):\n\(body)\n"
         }
         text += "\nMy question: \(question)"
         return ChatMessage(role: .user, text: text, images: imagesAllowed && pointed ? [content.selectionImage] : [])

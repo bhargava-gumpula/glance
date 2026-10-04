@@ -25,8 +25,8 @@ Do not use the Lenovo `.../thinkpad-x1-carbon-gen-13-.../len101t0100` link: it r
 **2. Shopping (0:15-1:15)**
 1. Safari: open page 1, scroll 5 s. Open page 2 in a new tab, scroll 5 s.
 2. Open Notes, paste `demo/budget-note.txt` (select all in the file, copy, paste). Say: "I'm keeping my budget here."
-3. Open page 3. **Click Pip's Point button (or tap ⌥Space while the panel is hidden) and drag a box over the spec area.** Then hold ⌥Space and say: "How's this different from the earlier ones?" Expected: a spoken answer using all three laptops and the EUR 1,200 / 16GB budget. (Needs Phase 3 memory, plus audit fix A19 so the budget note is found.)
-4. **Drag a new box over the "Unified memory" line** (a new selection starts a fresh question). Hold ⌥Space: "What does this mean for me?" (Pointing only works by dragging a box; Glance doesn't read what's under the cursor.)
+3. Open page 3. **Click Point, then drag a box over the spec area.** Then hold ⌥Space and say: "How's this different from the earlier ones?" Expected: a spoken answer using all three laptops and the EUR 1,200 / 16GB budget. (Needs Phase 3 memory, plus audit fix A19 so the budget note is found.)
+4. **Click Point, then drag a new box over the "Unified memory" line** (a new selection starts a fresh question). Hold ⌥Space: "What does this mean for me?" (Pointing = click Point, then drag a box. A ⌥Space tap only opens the chat; without a box, Glance sends the front window's text.)
 
 **3. Learning (1:15-2:00)**
 "Now I need to hand in my assignment as a PDF." Hold the hotkey: "Show me how to export this as a PDF."
@@ -48,7 +48,7 @@ Expect: the preview shows the card, IBAN, PPSN, email and password field blacked
 - [ ] Turn on Do Not Disturb (Control Centre, Focus).
 - [ ] Quit unneeded apps (Mail, Messages, Slack, Chrome, etc.); hide Dock and extra menu-bar items if cluttered.
 - [ ] Local-only mode OFF at the start so the toggle is visible.
-- [ ] Pointing = drag a box. Before each beat, check that the new selection's preview appears.
+- [ ] Pointing = click Point, then drag a box. Before each beat, check that the new selection's preview appears.
 - [ ] If local-only is shown live: Ollama running with qwen2.5vl, and one test question answered offline.
 - [ ] Mic and screen-recording permissions granted; test the hotkey once; volume up.
 - [ ] Close the mock bank page until beat 4.

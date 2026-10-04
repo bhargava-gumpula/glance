@@ -8,8 +8,9 @@ enum ActiveApp {
     /// A hung app must not freeze Glance: every AX call gives up after this long (the default is 6 s).
     static func limitAXWaits() { AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), 0.25) }
 
-    static func current() -> (app: NSRunningApplication?, window: Exclusions.Window, ax: AXUIElement?) {
-        let app = NSWorkspace.shared.frontmostApplication
+    /// `target` reads that app instead of the frontmost one (the app behind Glance's panel).
+    static func current(_ target: NSRunningApplication? = nil) -> (app: NSRunningApplication?, window: Exclusions.Window, ax: AXUIElement?) {
+        let app = target ?? NSWorkspace.shared.frontmostApplication
         var w = Exclusions.Window(bundleID: app?.bundleIdentifier, secureInput: secureInput())
         guard let app else { return (nil, w, nil) }
         let el = AXUIElementCreateApplication(app.processIdentifier)

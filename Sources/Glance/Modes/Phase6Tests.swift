@@ -84,5 +84,31 @@ enum Phase6Tests {
         check(!Config.guideAutoRecheck, "guide v2: kill switch off → v1")
         if let saved { UserDefaults.standard.set(saved, forKey: key) } else { UserDefaults.standard.removeObject(forKey: key) }
         check(Config.guideNudgeSeconds == 20 && Config.guideDebounce == 0.6, "guide v2: 20 s nudge, 600 ms debounce")
+
+        // 7. ⌥Space tap: show Pip + panel ready to type, never the pointing overlay
+        let T = PanelController.tapAction
+        check(T(false, false) == .showToType, "tap: hidden panel → show, ready to type (no pointing)")
+        check(T(false, true) == .hide, "tap: visible panel → hide")
+        check(T(true, false) == .guideNext && T(true, true) == .guideNext, "tap: during Guide → next")
+
+        // 8. Screen-now context for a question without a selection
+        let rows = [Timeline.Snippet(ts: 100, app: "Pages", title: "Essay", url: nil, text: "old"),
+                    Timeline.Snippet(ts: 108, app: "Pages", title: "Essay", url: nil, text: "new"),
+                    Timeline.Snippet(ts: 109, app: "Safari", title: "News", url: nil, text: "other")]
+        check(ScreenNow.fromMemory(rows, app: "Pages", title: "Essay", now: 110)?.text == "new", "screen now: fresh memory row of the window used")
+        check(ScreenNow.fromMemory(rows, app: "Pages", title: "Essay", now: 112) == nil, "screen now: row older than 3 s → fresh read")
+        check(ScreenNow.fromMemory(rows, app: "Pages", title: "Draft", now: 110) == nil, "screen now: another window's row not used")
+        let built = MemoryContext.Built(text: "Activity log: Safari news", pages: 1, apps: 1, trimmedPages: 0, newest: 109)
+        let sn = ContextPacket.memoryOnly().withScreenNow(app: "Pages", title: "Essay", text: "Card 4111 1111 1111 1111\nTotal due")
+        check(sn.memory.hasPrefix("On screen now (Pages — \"Essay\"):") && sn.memory.contains("[CARD]") && !sn.memory.contains("4111")
+              && sn.memoryHits == 1, "screen now: redacted, counted, shown in the preview")
+        let both = sn.withMemory(built)
+        check(both.memory.hasPrefix(sn.screenNow) && both.memory.hasSuffix("Activity log: Safari news") && both.memoryHits == 1,
+              "screen now: kept when memory is added or refreshed")
+        let again = both.withScreenNow(app: "Pages", title: "Essay", text: "Total due")
+        check(again.memory == again.screenNow + "Activity log: Safari news" && again.memoryHits == 0, "screen now: replaced, not stacked")
+        let msg = both.firstMessage(both.redacted, question: "what is due?", imagesAllowed: true)
+        check(msg.text.contains("What's on my screen right now") && msg.text.contains("Total due") && msg.text.contains("What I've been doing")
+              && msg.images.isEmpty && !both.hasSelection, "screen now: text only in the message, no image")
     }
 }

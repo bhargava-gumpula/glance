@@ -218,6 +218,11 @@ Built so far:
 - [ ] `defaults write ie.dublinhacx.glance guideAutoRecheck -bool NO`, relaunch → v1 (needs "next"); `defaults delete ie.dublinhacx.glance guideAutoRecheck` to undo.
 - Trace: the Phase 5 `log stream` command; v2 lines are `guide: verdict …`, `guide: local advance …`, `guide: model re-check N`, `guide: re-check ok|wrong|not_yet`, `guide: idle nudge`.
 
+## ⌥Space tap = type, Point = select (owner request, integration)
+- A ⌥Space tap shows Pip and the panel with the cursor in the text field; no pointing overlay (`PanelController.tapAction`). The PointTool starts only from the panel's Point button. Hold = talk, tap during Guide = next, tap again = hide (unchanged). The menu's Show Glance acts like a tap.
+- A question without a selection carries what's on screen now (`Capture/ScreenNow.swift`): the front non-Glance window's text from the newest memory row of that window if it is ≤ 3 s old, else a fresh `ContextPacket.capture` of that window (Glance and excluded apps filtered out; `Exclusions.memorySkipReason` skips excluded apps, password fields, private or blocked browser windows). Text only, cut to 6000 chars, redacted in `ContextPacket.withScreenNow`, and placed at the start of `memory` so the preview, Send/Cancel and the hid-N count cover it. Recent activity memory follows as before. Log: `screen now: …`.
+- Selftest: 3 tap and 7 screen-now checks (in `Modes/Phase6Tests.swift`); 439 total pass.
+
 ## Notes
 - UI (Pip and the chat panel) architecture, Guide API, decisions, audit A13–A16 and gaps: [docs/notes/UI-NOTES.md](notes/UI-NOTES.md)
 - Phase 3 (memory) background, root causes and open checks: [docs/notes/PHASE3-NOTES.md](notes/PHASE3-NOTES.md)
