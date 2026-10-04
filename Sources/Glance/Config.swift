@@ -17,6 +17,8 @@ enum Config {
     static var retentionMinutes: Int { value("retentionMinutes", default: 10) }
     static var provider: String { value("provider", default: "claude") }
     static var ttsEnabled: Bool { value("ttsEnabled", default: true) }
+    /// Phase 4: nothing leaves the Mac. Local AI (Ollama, else Apple's on-device model), Apple speech, the Mac voice.
+    static var localOnly: Bool { value("localOnly", default: false) }
 
     // MARK: Voice (Phase 2)
 
