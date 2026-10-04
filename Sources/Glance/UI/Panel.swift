@@ -40,6 +40,7 @@ final class PanelController {
         }
         pointTool.onCancel = { [weak self] in self?.focusInput() }
         pet.onTap = { [weak self] in self?.petTapped() }
+        chat.onSay = { [weak self] in self?.pet.say($0) }
     }
 
     /// Clicking Pip opens the chat to message it (or hides the chat).
@@ -159,6 +160,8 @@ final class ChatModel: ObservableObject {
         }
     }
     var onPoint: (() -> Void)?
+    /// Phase 4: Pip shows the fixed "I hid N" / confirm line.
+    var onSay: ((String) -> Void)?
     var timeline: Timeline?
 
     let mode = Mode.explain
@@ -220,6 +223,12 @@ final class ChatModel: ObservableObject {
             do {
                 let heard = try await Voice.transcribe(wav: wav, with: Voice.sttChain())
                 guard serial == mine else { return } // the user moved on (new question, selection or recording)
+                // Phase 4: a spoken "send" / "cancel" answers a waiting Send/Cancel instead of asking a new question.
+                if SendConfirm.shared.prompt != nil, let send = SendConfirm.spokenAnswer(heard.text) {
+                    transcribing = false
+                    SendConfirm.shared.answer(send)
+                    return
+                }
                 log.notice("voice: transcribed by \(heard.engine, privacy: .public) in \(Date().timeIntervalSince(released), format: .fixed(precision: 2), privacy: .public) s")
                 let shown = heard.engine == "ElevenLabs" ? "🎙 \(heard.text)" : "🎙 \(heard.text) (\(heard.engine))"
                 transcribing = false
@@ -313,8 +322,12 @@ final class ChatModel: ObservableObject {
             let announce = history.isEmpty || (reveal && !revealed) || Self.needsPreview(first: previewedFor, now: target)
             if announce { previewedFor = target }
             revealed = reveal
+            var hidLine: String? // Phase 4: fixed local line, spoken and shown by Pip before the answer
+            var confirming = false
             let answer = ContextPacket.send(packet, history: history, question: question, reveal: reveal,
                                             announce: announce, mode: mode, provider: provider) { preview in
+                hidLine = preview.confirmPrompt ?? (preview.revealed ? nil : SendConfirm.hidLine(preview.redactions))
+                confirming = preview.confirmPrompt != nil
                 var text = "Sending to \(preview.providerName): "
                 if preview.image == nil && preview.selectedText.isEmpty {
                     text += "your question" + (preview.memory.isEmpty ? "." : " and your recent activity (text).")
@@ -344,6 +357,7 @@ final class ChatModel: ObservableObject {
             speaker.begin(tts) {
                 if let spokenAt { log.notice("voice: release → first spoken audio \(Date().timeIntervalSince(spokenAt), format: .fixed(precision: 2), privacy: .public) s") }
             }
+            if let hidLine { speaker.say(hidLine); onSay?(hidLine) }
             do {
                 var raw = ""
                 for try await delta in answer {
@@ -354,6 +368,13 @@ final class ChatModel: ObservableObject {
                 }
                 // A cancelled stream just ends; it is not a finished answer and must not enter the history.
                 guard !Task.isCancelled else { return }
+                // Phase 4: Cancel on the Send/Cancel step ends the stream with nothing sent.
+                if raw.isEmpty && confirming {
+                    speaker.stop()
+                    turns.remove(at: index)
+                    turns.append(Turn(kind: .notice, text: "Cancelled. Nothing was sent."))
+                    return
+                }
                 turns[index].text = speaker.answer(raw, final: true)
                 history += [ChatMessage(role: .user, text: question), ChatMessage(role: .assistant, text: raw)]
             } catch is CancellationError {
@@ -368,11 +389,14 @@ final class ChatModel: ObservableObject {
 
 struct PanelView: View {
     @ObservedObject var chat: ChatModel
+    @ObservedObject var confirm = SendConfirm.shared
+    @AppStorage("localOnly") private var localOnly = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label("Glance · \(chat.mode.name)", systemImage: "eye").font(.headline)
+                if localOnly { LocalOnlyBadge() }
                 Spacer()
                 Button { chat.muted.toggle() } label: {
                     Image(systemName: chat.muted ? "speaker.slash" : "speaker.wave.2")
@@ -409,6 +433,17 @@ struct PanelView: View {
                 .onChange(of: chat.turns.count) { proxy.scrollTo("bottom") }
             }
 
+            if let prompt = confirm.prompt {
+                HStack {
+                    Label(prompt, systemImage: "lock.shield").font(.callout.bold())
+                    Spacer()
+                    Button("Cancel") { confirm.answer(false) }.keyboardShortcut(.cancelAction)
+                    Button("Send") { confirm.answer(true) }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+                }
+                .padding(8)
+                .background(Color.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 8))
+                .help("Say \u{201C}send\u{201D} or \u{201C}cancel\u{201D} with \(Config.hotkeyDescription) too")
+            }
             HStack {
                 TextField("Ask about it…", text: $chat.input)
                     .textFieldStyle(.roundedBorder)
@@ -441,10 +476,13 @@ private struct TurnView: View {
         case .assistant:
             Text(markdown(turn.text.isEmpty ? "…" : turn.text)).textSelection(.enabled)
         case .preview:
-            HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 8) {
+                // Phase 4: big enough to see the blacked-out lines; click to enlarge.
                 if let image = turn.image {
-                    Image(nsImage: image).resizable().scaledToFit().frame(maxWidth: 90, maxHeight: 70)
+                    Image(nsImage: image).resizable().scaledToFit().frame(maxWidth: .infinity, maxHeight: 220)
                         .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .onTapGesture { PreviewPeek.show(image) }
+                        .help("Click to enlarge")
                 }
                 Text(turn.text).font(.caption).foregroundStyle(.secondary).lineLimit(12)
             }

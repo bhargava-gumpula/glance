@@ -57,7 +57,7 @@ enum Voice {
     /// ElevenLabs first when there's a key, then Apple on-device.
     @MainActor
     static func sttChain() -> [SpeechToText] {
-        sttChain(elevenLabsKey: Keychain.get(elevenLabsAccount))
+        Config.localOnly ? [AppleSTT()] : sttChain(elevenLabsKey: Keychain.get(elevenLabsAccount))
     }
 
     static func sttChain(elevenLabsKey: String?) -> [SpeechToText] {
@@ -85,7 +85,7 @@ enum Voice {
     /// Nil when muted. Otherwise ElevenLabs (with a key) backed by the Mac voice, so answers are always spoken.
     @MainActor
     static func tts(muted: Bool, onFallback: @escaping @Sendable (String) -> Void) -> TextToSpeech? {
-        tts(muted: muted, elevenLabsKey: Keychain.get(elevenLabsAccount), voiceID: Config.elevenLabsVoiceID,
+        tts(muted: muted, elevenLabsKey: Config.localOnly ? nil : Keychain.get(elevenLabsAccount), voiceID: Config.elevenLabsVoiceID,
             fallback: MacTTS.shared, onFallback: onFallback)
     }
 
@@ -433,6 +433,15 @@ final class Speaker {
             if done { finish(); finished = true }
         }
         return shown
+    }
+
+    /// Phase 4: a fixed local line (e.g. "I hid 3 sensitive items before sending.") spoken before the answer.
+    /// It doesn't use the answer's spoken-length budget.
+    func say(_ line: String) {
+        let s = Voice.speakable(line)
+        guard tts != nil, !s.isEmpty else { return }
+        queue.append(s)
+        if worker == nil { work() }
     }
 
     func feed(_ delta: String) {

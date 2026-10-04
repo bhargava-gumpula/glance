@@ -31,6 +31,8 @@ protocol AIProvider: Sendable {
     func makeRequest(system: String, messages: [ChatMessage]) throws -> URLRequest
     /// Parses one server-sent-event `data:` payload into a text delta, if it carries one.
     func textDelta(fromEvent payload: String) throws -> String?
+    /// HTTP + SSE by default; on-device providers stream their own way.
+    func stream(system: String, messages: [ChatMessage]) -> AsyncThrowingStream<String, Error>
 }
 
 extension AIProvider {
@@ -66,6 +68,11 @@ enum Providers {
     /// The provider chosen in Settings, with its key from the Keychain.
     @MainActor
     static func current() throws -> AIProvider {
+        // Phase 4: local only uses the Local provider, backed by Apple's on-device model. The Network gate
+        // refuses anything that isn't this Mac, so a non-localhost Local address falls through to Apple too.
+        if Config.localOnly {
+            return LocalOnlyProvider(local: make(id: "local", key: Keychain.get("local") ?? ""), fallback: AppleOnDeviceProvider())
+        }
         let id = Config.provider
         let preset = Config.preset(id)
         let key = Keychain.get(id) ?? ""

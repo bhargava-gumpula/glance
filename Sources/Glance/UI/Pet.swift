@@ -210,6 +210,8 @@ struct PetView: View {
     let onTap: () -> Void
     let onDrag: () -> Void
     let onDragEnd: () -> Void
+    @ObservedObject var confirm = SendConfirm.shared
+    @AppStorage("localOnly") private var localOnly = false
 
     nonisolated static func lastReply(in turns: [ChatModel.Turn]) -> ChatModel.Turn? {
         turns.last { $0.kind == .assistant || $0.kind == .notice }
@@ -258,7 +260,13 @@ struct PetView: View {
         let bubbleX = min(max(l.sprite.x + s.width / 2 - 130, 0), w.width - 260)
         let tailRight = l.sprite.x + s.width / 2 > bubbleX + 130
         ZStack(alignment: .topLeading) {
-            if let bubble = Self.bubbleText(state: state, transcribing: chat.transcribing, said: model.said,
+            if let prompt = confirm.prompt {
+                PetBubbleView(text: prompt + " Say \u{201C}send\u{201D} or \u{201C}cancel\u{201D}.", tailOnRight: tailRight,
+                              onSend: { confirm.answer(true) }, onCancel: { confirm.answer(false) }) {}
+                    .frame(width: 260, height: max(0, l.bubbleBelow ? w.height - spriteTop - s.height - 6 : spriteTop - 6),
+                           alignment: Alignment(horizontal: tailRight ? .trailing : .leading, vertical: l.bubbleBelow ? .top : .bottom))
+                    .offset(x: bubbleX, y: l.bubbleBelow ? spriteTop + s.height + 6 : 0)
+            } else if let bubble = Self.bubbleText(state: state, transcribing: chat.transcribing, said: model.said,
                                             reply: reply.map { ($0.id, $0.text) }, spoken: spoken, dismissed: model.dismissed) {
                 PetBubbleView(text: bubble, tailOnRight: tailRight) { model.dismissed = reply?.id; model.said = nil }
                     .frame(width: 260, height: max(0, l.bubbleBelow ? w.height - spriteTop - s.height - 6 : spriteTop - 6),
@@ -267,6 +275,7 @@ struct PetView: View {
             }
             PipSpriteView(state: state, pointLeft: l.pointLeft)
                 .frame(width: s.width, height: s.height)
+                .overlay(alignment: .bottom) { if localOnly { LocalOnlyBadge().offset(y: 8) } }
                 .contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 0)
                     .onChanged { v in if abs(v.translation.width) + abs(v.translation.height) > 3 { onDrag() } }

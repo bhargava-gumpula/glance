@@ -80,8 +80,45 @@ enum Phase4Tests {
         let consent = trySend(mailOnly, answer: nil, confirm: { p in consentCalls.n += 1; return p.confirmPrompt != nil })
         check(consentCalls.n == 1 && consent.sent.isEmpty, "send(): a caller's confirm is always awaited; false sends nothing")
 
+        localOnly(check)
         mockBank(check)
         networkGate(check)
+    }
+
+    /// Scope 3: local-only mode routes AI and voice to this Mac, and the gate refuses everything else.
+    private static func localOnly(_ check: (Bool, String) -> Void) {
+        let d = UserDefaults.standard
+        let before = d.object(forKey: "localOnly")
+        defer { d.set(before, forKey: "localOnly") }
+        d.set(true, forKey: "localOnly")
+        let (routed, stt) = MainActor.assumeIsolated { () -> (Bool, [String]) in
+            let p = try? Providers.current()
+            return (p is LocalOnlyProvider && (p as? LocalOnlyProvider)?.fallback is AppleOnDeviceProvider, Voice.sttChain().map(\.name))
+        }
+        check(routed, "local only: AI is Local, backed by Apple's on-device model")
+        check(stt == ["on-device"], "local only: speech-to-text is Apple on-device")
+        check(Voice.tts(muted: false, elevenLabsKey: nil, voiceID: "x", fallback: MacTTS.shared) != nil, "local only: Mac voice still speaks")
+        let blocked = blocking { () async -> Bool in
+            do { _ = try await Network.data(for: URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)); return false }
+            catch { return error is Network.Blocked }
+        }
+        check(blocked == true, "local only: a cloud request is refused by the gate before it leaves")
+
+        // Fallback: Ollama not answering → the on-device provider answers.
+        d.set("http://localhost:9/v1", forKey: "baseURL.local") // nothing listens on port 9
+        defer { d.removeObject(forKey: "baseURL.local") }
+        let fallbackLocal = LocalOnlyProvider(local: Providers.make(id: "local", key: ""), fallback: CannedProvider(reply: "on-device answer"))
+        let text = blocking { () async -> String in
+            var text = ""
+            do { for try await t in fallbackLocal.stream(system: "s", messages: [ChatMessage(role: .user, text: "hi")]) { text += t } } catch {}
+            return text
+        }
+        check(text == "on-device answer", "local only: no Ollama → Apple's on-device model answers")
+        let long = [ChatMessage(role: .user, text: String(repeating: "memory line\n", count: 3000) + "My question: is this good?")]
+        let prompt = AppleOnDeviceProvider.prompt(long)
+        check(prompt.count <= AppleOnDeviceProvider.maxPromptChars + 3 && prompt.hasSuffix("My question: is this good?"),
+              "local only: on-device prompt fits its context and keeps the question")
+        print("      Apple on-device model: \(AppleOnDeviceProvider.unavailableReason.map { "unavailable (\($0))" } ?? "available")")
     }
 
     /// Scope 6: demo/mock-bank.html, rendered and OCR'd, comes out fully tagged and asks before sending.
@@ -155,3 +192,25 @@ private final class RecordingProvider4: AIProvider, @unchecked Sendable {
 }
 
 private final class Counter: @unchecked Sendable { var n = 0 }
+
+/// Streams a fixed reply, standing in for the on-device model.
+private struct CannedProvider: AIProvider {
+    let reply: String
+    var name: String { "Canned" }
+    var supportsImages: Bool { false }
+    func makeRequest(system: String, messages: [ChatMessage]) throws -> URLRequest { throw CancellationError() }
+    func textDelta(fromEvent payload: String) throws -> String? { nil }
+    func stream(system: String, messages: [ChatMessage]) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { $0.yield(reply); $0.finish() }
+    }
+}
+
+/// Runs async work from the synchronous selftest (off the main thread) and waits for it.
+private func blocking<T: Sendable>(timeout: Double = 10, _ op: @escaping @Sendable () async -> T) -> T? {
+    let box = SendableBox<T>(), done = DispatchSemaphore(value: 0)
+    Task.detached { box.value = await op(); done.signal() }
+    _ = done.wait(timeout: .now() + timeout)
+    return box.value
+}
+
+private final class SendableBox<T>: @unchecked Sendable { var value: T? }

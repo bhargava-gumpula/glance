@@ -11,6 +11,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let memory = MemoryRecorder()
     private let memoryStatus = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let pauseItem = NSMenuItem(title: "Pause Memory", action: #selector(togglePause), keyEquivalent: "")
+    private let localOnlyItem = NSMenuItem(title: "Local Only", action: #selector(toggleLocalOnly), keyEquivalent: "")
+    private var localOnlyWatch: NSObjectProtocol?
 
     static func main() {
         if CommandLine.arguments.contains("--selftest") { SelfTest.run() }
@@ -32,12 +34,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(pauseItem)
         menu.addItem(withTitle: "Forget Last \(Config.forgetMinutes) Minutes", action: #selector(forget), keyEquivalent: "")
         menu.addItem(.separator())
+        menu.addItem(localOnlyItem)
         menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
         menu.addItem(withTitle: "Permissions…", action: #selector(showOnboarding), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Glance", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         for item in menu.items where item.action != #selector(NSApplication.terminate(_:)) { item.target = self }
         statusItem.menu = menu
+        // Phase 4: the menu item, Settings toggle and badges all read UserDefaults "localOnly".
+        showLocalOnly()
+        localOnlyWatch = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.showLocalOnly() }
+        }
 
         // Capture indicator: eye = recording, eye.slash = paused or off, eye with a dot = skipping this window.
         memory.onChange = { [weak self] in self?.showMemoryState($0) }
@@ -65,6 +73,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func showOnboarding() { onboarding.show() }
     @objc private func showSettings() { settings.show() }
     @objc private func togglePause() { memory.paused.toggle() }
+    @objc private func toggleLocalOnly() { UserDefaults.standard.set(!Config.localOnly, forKey: "localOnly") }
+
+    private func showLocalOnly() {
+        localOnlyItem.state = Config.localOnly ? .on : .off
+        localOnlyItem.toolTip = "AI, speech and voice stay on this Mac; every other address is blocked."
+    }
     @objc private func forget() {
         let n = memory.forgetRecent()
         log.notice("memory: forgot \(n, privacy: .public) snapshot(s)")
