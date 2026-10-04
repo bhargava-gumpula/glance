@@ -57,20 +57,14 @@ struct Problem: Equatable {
             return Problem(severity: .warning, symbol: "key", title: "Key is for a different address",
                            hint: "Re-enter the key in Settings to use it with this address.", action: .settings, detail: text)
         }
-        if has("offline", "not connected to the internet", "network connection was lost", "could not be found",
-               "timed out", "cannot connect to host", "could not connect to the server",
-               "error -1009", "error -1001", "error -1003", "error -1004", "error -1005", "error -1020") {
-            return Problem(severity: .warning, symbol: "wifi.slash", title: "You're offline",
-                           hint: "Pip can't reach the AI right now. Memory keeps working on this Mac.", action: .retryLater, detail: text)
+        if has("elevenlabs") {
+            return Problem(severity: .info, symbol: "speaker.badge.exclamationmark", title: "Voice had a hiccup",
+                           hint: "Answers still show here as text.", detail: text)
         }
-        if has("microphone", "check permissions", "speech recognition for glance", "couldn't read the screen", "screen recording") {
-            let what = has("microphone") ? "the microphone" : has("speech recognition") ? "Speech Recognition" : "Screen Recording"
-            return Problem(severity: .warning, symbol: "lock.shield", title: "Permission needed",
-                           hint: "Glance needs \(what) for this. Allow it, then try again.", action: .permissions, detail: text)
-        }
+        // Provider HTTP errors first, by status: their bodies can contain network-sounding words
+        // (Azure's 404 says "could not be found"), which must not read as offline.
         if let status = httpStatus(text) {
-            if has("deploymentnotfound", "deployment not ready", "provisioning", "is not ready", "deployment for this resource does not exist",
-                   "api deployment") {
+            if has("provisioning", "deployment not ready", "is not ready") || (status == 400 && has("deploymenterror")) {
                 return Problem(severity: .warning, symbol: "hourglass", title: "The model isn't ready yet",
                                hint: "Your Azure deployment is still being set up. Try again in a few minutes, or pick another provider in Settings.",
                                action: .settings, detail: text)
@@ -80,8 +74,9 @@ struct Problem: Equatable {
                 return Problem(severity: .error, symbol: "key.slash", title: "The key was refused",
                                hint: "The provider didn't accept your API key. Check it in Settings.", action: .settings, detail: text)
             case 404:
-                return Problem(severity: .error, symbol: "questionmark.circle", title: "Model or address not found",
-                               hint: "Check the model name and address in Settings.", action: .settings, detail: text)
+                return Problem(severity: .error, symbol: "questionmark.circle", title: "Model or deployment not found",
+                               hint: "Check that Settings → Model matches the deployment name exactly. A new Azure deployment can take a few minutes to appear.",
+                               action: .settings, detail: text)
             case 429:
                 return Problem(severity: .warning, symbol: "tortoise", title: "Too many requests",
                                hint: "The provider asked Pip to slow down. Wait a moment and ask again.", action: .retryLater, detail: text)
@@ -93,9 +88,16 @@ struct Problem: Equatable {
                                hint: "Pip couldn't get an answer this time.", detail: text)
             }
         }
-        if has("elevenlabs") {
-            return Problem(severity: .info, symbol: "speaker.badge.exclamationmark", title: "Voice had a hiccup",
-                           hint: "Answers still show here as text.", detail: text)
+        if has("offline", "not connected to the internet", "network connection was lost", "could not be found",
+               "timed out", "cannot connect to host", "could not connect to the server",
+               "error -1009", "error -1001", "error -1003", "error -1004", "error -1005", "error -1020") {
+            return Problem(severity: .warning, symbol: "wifi.slash", title: "You're offline",
+                           hint: "Pip can't reach the AI right now. Memory keeps working on this Mac.", action: .retryLater, detail: text)
+        }
+        if has("microphone", "check permissions", "speech recognition for glance", "couldn't read the screen", "screen recording") {
+            let what = has("microphone") ? "the microphone" : has("speech recognition") ? "Speech Recognition" : "Screen Recording"
+            return Problem(severity: .warning, symbol: "lock.shield", title: "Permission needed",
+                           hint: "Glance needs \(what) for this. Allow it, then try again.", action: .permissions, detail: text)
         }
         if text.count <= 90 { // short notices ("Didn't catch that…") are already friendly
             return Problem(severity: .warning, symbol: "exclamationmark.circle", title: text, hint: "")
@@ -160,8 +162,17 @@ struct Problem: Equatable {
         check(classify(AIError.missingKey("DeepSeek").localizedDescription).title == "Add an API key"
               && classify(AIError.missingKey("DeepSeek").localizedDescription).hint.contains("DeepSeek"), "problem: no API key")
         let azure = AIError.http(404, #"{"error":{"code":"DeploymentNotFound","message":"The API deployment for this resource does not exist."}}"#)
-        check(classify(azure.localizedDescription).title == "The model isn't ready yet"
-              && classify(azure.localizedDescription).detail?.contains("DeploymentNotFound") == true, "problem: Azure deployment not ready, raw text in details")
+        check(classify(azure.localizedDescription).title == "Model or deployment not found"
+              && classify(azure.localizedDescription).detail?.contains("DeploymentNotFound") == true, "problem: Azure missing deployment → not found, raw text in details")
+        let azure404 = AIError.http(404, #"{"error":{"code":"404","message":"The model grok-4.6 could not be found."}}"#)
+        check(classify(azure404.localizedDescription).title == "Model or deployment not found", "problem: Azure 404 \"could not be found\" is not offline")
+        check(classify(AIError.http(408, "Request timed out").localizedDescription).symbol != "wifi.slash", "problem: an HTTP status is never offline")
+        check(classify(AIError.http(400, #"{"error":{"code":"DeploymentError","message":"Deployment is provisioning"}}"#).localizedDescription).title
+              == "The model isn't ready yet", "problem: 400 DeploymentError → not ready")
+        check(classify("A server with the specified hostname could not be found.").symbol == "wifi.slash"
+              && classify("The request timed out.").symbol == "wifi.slash", "problem: real URLError texts are offline")
+        check(classify(VoiceError.elevenLabs(status: 402, code: "paid_plan_required", message: "x").localizedDescription).title == "Voice had a hiccup",
+              "problem: ElevenLabs HTTP errors stay voice problems")
         check(classify(AIError.http(401, "bad key").localizedDescription).action == .settings, "problem: 401 → check key")
         check(classify(AIError.http(503, "").localizedDescription).title == "The provider is having trouble", "problem: 5xx")
         check(classify(URLError(.notConnectedToInternet).localizedDescription).symbol == "wifi.slash"
