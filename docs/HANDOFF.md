@@ -142,5 +142,6 @@ Built so far:
 `main` = the combined build: Phase 2 voice, Phase 3 memory (memory on every question, the activity log, full recent context), Pip, and audit fixes A1–A19. 253 selftests pass. The owner confirmed "this version works well". Claude via Azure is pending the deployment's provisioningState = Succeeded.
 
 ## Notes
+- UI (Pip and the chat panel) architecture, Guide API, decisions, audit A13–A16 and gaps: [docs/notes/UI-NOTES.md](notes/UI-NOTES.md)
 - Phase 3 (memory) background, root causes and open checks: [docs/notes/PHASE3-NOTES.md](notes/PHASE3-NOTES.md)
 - Phase 2 (voice) architecture, decisions, ElevenLabs facts, audit A1–A12 and open items: [docs/notes/PHASE2-NOTES.md](notes/PHASE2-NOTES.md)
