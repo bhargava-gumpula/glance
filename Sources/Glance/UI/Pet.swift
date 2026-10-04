@@ -26,12 +26,25 @@ final class PetModel: ObservableObject {
     @Published var dismissed: UUID?
     /// Estimated end of the spoken line; nil when silent.
     @Published var talkUntil: Date?
+    /// Pip's one-line field (⌥Space tap); `focusTick` bumps to put the cursor in it.
+    @Published var compact = false
+    @Published var focusTick = 0
+}
+
+/// Pip's window can take the keyboard for its one-line field without activating Glance.
+private final class KeyPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
 }
 
 /// Pip's own always-on-top window; shows chat state and points at things on screen.
 @MainActor
 final class PetController {
     var onTap: (() -> Void)?
+    /// The bubble's "Show more": the full chat panel.
+    var onShowMore: (() -> Void)?
+    /// The spoken line ended (or was cut short).
+    var onQuiet: (() -> Void)?
+    var isSpeaking: Bool { model.talkUntil.map { $0 > Date() } ?? false }
     /// Keeps Pip on screen while Glance is hidden (Phase 5 sets it to "a Guide session is active").
     var keepVisible: () -> Bool = { false }
     /// True between `appear()` (Glance shown) and `disappear()` (Glance hidden).
@@ -40,7 +53,7 @@ final class PetController {
     private let model = PetModel()
     private let window: NSPanel
     private let ring = RingWindow()
-    static let size = NSSize(width: 300, height: 260)
+    static let size = NSSize(width: 300, height: 310) // room for the bubble plus the one-line field
     static let sprite = NSSize(width: 120, height: 90)
     private var home: PetGeometry.Layout?
     private var flight: Task<Void, Never>?
@@ -52,7 +65,7 @@ final class PetController {
 
     init(chat: ChatModel) {
         self.chat = chat
-        window = NSPanel(contentRect: NSRect(origin: .zero, size: Self.size),
+        window = KeyPanel(contentRect: NSRect(origin: .zero, size: Self.size),
                          styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
         window.backgroundColor = .clear
         window.isOpaque = false
@@ -63,6 +76,7 @@ final class PetController {
         window.contentView = NSHostingView(rootView: PetView(
             chat: chat, model: model,
             onTap: { [weak self] in self?.onTap?() },
+            onShowMore: { [weak self] in self?.onShowMore?() },
             onDrag: { [weak self] in self?.drag() },
             onDragEnd: { [weak self] in self?.dragEnded() }))
         watchers = [
@@ -197,13 +211,39 @@ final class PetController {
         talkTimer?.cancel()
         talkTimer = Task { [weak self] in
             try? await Task.sleep(for: .seconds(max(0, until.timeIntervalSinceNow)))
-            if !Task.isCancelled { self?.model.talkUntil = nil }
+            if !Task.isCancelled { self?.model.talkUntil = nil; self?.onQuiet?() }
         }
     }
 
     private func stopTalking() {
         talkTimer?.cancel()
         model.talkUntil = nil
+        onQuiet?()
+    }
+
+    /// Shows Pip's one-line field; `focus` puts the cursor in it (Pip's window takes the keyboard, the app stays active).
+    func showCompact(focus: Bool) {
+        model.compact = true
+        window.orderFrontRegardless()
+        if focus {
+            window.makeKey()
+            model.focusTick += 1
+        }
+    }
+
+    func hideCompact() {
+        model.compact = false
+        if window.isKeyWindow { window.resignKey() }
+    }
+
+    var compactShown: Bool { model.compact }
+
+    /// The selection's answer is done: stop pointing and go home, keeping the bubble.
+    func stopPointing() {
+        guard model.pointing else { return }
+        model.pointing = false
+        ring.hide()
+        if let home { apply(home, animated: true) }
     }
 
     /// About 14 characters a second plus ~1 s before the first audio; Speaker speaks at most ~280 characters.
@@ -244,10 +284,14 @@ struct PetView: View {
     @ObservedObject var chat: ChatModel
     @ObservedObject var model: PetModel
     let onTap: () -> Void
+    var onShowMore: () -> Void = {}
     let onDrag: () -> Void
     let onDragEnd: () -> Void
     @ObservedObject var confirm = SendConfirm.shared
     @AppStorage("localOnly") private var localOnly = false
+    @FocusState private var fieldFocused: Bool
+
+    nonisolated static let failedText = "Something went wrong."
 
     nonisolated static func lastReply(in turns: [ChatModel.Turn]) -> ChatModel.Turn? {
         // Owner rule: Pip's bubble shows only answers (their Say line), Guide steps and Send/Cancel.
@@ -267,11 +311,13 @@ struct PetView: View {
     /// Bubble text: status while listening/thinking; otherwise `say()` text unless a newer reply came,
     /// then the reply's spoken line (the panel shows the full answer), unless the user closed it.
     nonisolated static func bubbleText(state: PetState, said: (text: String, after: UUID?)?,
-                                       reply: (id: UUID, text: String)?, spoken: String?, dismissed: UUID?) -> String? {
+                                       reply: (id: UUID, text: String)?, spoken: String?, dismissed: UUID?,
+                                       failed: Bool = false) -> String? {
         switch state {
         case .listening: return "Listening…"
         case .thinking: return "Thinking…"
         default:
+            if failed { return failedText } // the error card is in the panel, behind Show more
             if let said, said.after == reply?.id { return said.text }
             guard let reply, reply.id != dismissed else { return nil }
             let text = spoken.flatMap { $0.isEmpty ? nil : $0 } ?? reply.text
@@ -304,12 +350,22 @@ struct PetView: View {
                     .frame(width: 260, height: max(0, l.bubbleBelow ? w.height - spriteTop - s.height - 6 : spriteTop - 6),
                            alignment: Alignment(horizontal: tailRight ? .trailing : .leading, vertical: l.bubbleBelow ? .top : .bottom))
                     .offset(x: bubbleX, y: l.bubbleBelow ? spriteTop + s.height + 6 : 0)
-            } else if let bubble = Self.bubbleText(state: state, said: model.said,
-                                            reply: reply.map { ($0.id, $0.text) }, spoken: spoken, dismissed: model.dismissed) {
-                PetBubbleView(text: bubble, tailOnRight: tailRight) { model.dismissed = reply?.id; model.said = nil }
-                    .frame(width: 260, height: max(0, l.bubbleBelow ? w.height - spriteTop - s.height - 6 : spriteTop - 6),
-                           alignment: Alignment(horizontal: tailRight ? .trailing : .leading, vertical: l.bubbleBelow ? .top : .bottom))
-                    .offset(x: bubbleX, y: l.bubbleBelow ? spriteTop + s.height + 6 : 0)
+            } else {
+                let bubble = Self.bubbleText(state: state, said: model.said, reply: reply.map { ($0.id, $0.text) },
+                                             spoken: spoken, dismissed: model.dismissed, failed: chat.failed)
+                VStack(alignment: tailRight ? .trailing : .leading, spacing: 6) {
+                    if model.compact && l.bubbleBelow { compactField }
+                    if let bubble {
+                        PetBubbleView(text: bubble, tailOnRight: tailRight,
+                                      onMore: state == .listening || state == .thinking ? nil : onShowMore) {
+                            model.dismissed = reply?.id; model.said = nil; chat.failed = false
+                        }
+                    }
+                    if model.compact && !l.bubbleBelow { compactField }
+                }
+                .frame(width: 260, height: max(0, l.bubbleBelow ? w.height - spriteTop - s.height - 6 : spriteTop - 6),
+                       alignment: Alignment(horizontal: tailRight ? .trailing : .leading, vertical: l.bubbleBelow ? .top : .bottom))
+                .offset(x: bubbleX, y: l.bubbleBelow ? spriteTop + s.height + 6 : 0)
             }
             PipSpriteView(state: state, pointLeft: l.pointLeft)
                 .frame(width: s.width, height: s.height)
@@ -325,6 +381,24 @@ struct PetView: View {
                 .offset(x: l.sprite.x, y: spriteTop)
         }
         .frame(width: w.width, height: w.height, alignment: .topLeading)
+    }
+
+    /// ⌥Space tap: a one-line field and a Point button, attached to Pip.
+    private var compactField: some View {
+        HStack(spacing: 6) {
+            TextField("Ask Pip…", text: $chat.input)
+                .textFieldStyle(.roundedBorder)
+                .focused($fieldFocused)
+                .onSubmit { chat.submit() }
+            Button { chat.point() } label: { Image(systemName: "viewfinder") }
+                .help("Point: drag a box over something on screen")
+        }
+        .controlSize(.small)
+        .padding(6)
+        .background(Color(nsColor: .textBackgroundColor))
+        .overlay(Rectangle().strokeBorder(PetBubbleView.accent, lineWidth: 2))
+        .frame(width: 260)
+        .onChange(of: model.focusTick, initial: true) { fieldFocused = model.compact }
     }
 
     nonisolated static func selfTest(_ check: (Bool, String) -> Void) {

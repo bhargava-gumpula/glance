@@ -224,6 +224,12 @@ Built so far:
 - A question without a selection carries what's on screen now (`Capture/ScreenNow.swift`): the front non-Glance window's text from the newest memory row of that window if it is ≤ 3 s old, else a fresh `ContextPacket.capture` of that window (Glance and excluded apps filtered out; `Exclusions.memorySkipReason` skips excluded apps, password fields, private or blocked browser windows). Text only, cut to 6000 chars, redacted in `ContextPacket.withScreenNow`, and placed at the start of `memory` so the preview, Send/Cancel and the hid-N count cover it. Recent activity memory follows as before. Log: `screen now: …`.
 - Selftest: 3 tap and 7 screen-now checks (in `Modes/Phase6Tests.swift`); 439 total pass.
 
+## Pip-only by default + selection highlight clears (owner request, integration)
+- **Surfaces** (`GlanceSurface` in `UI/Panel.swift`, pure): the chat panel is hidden by default. A ⌥Space tap shows Pip with a one-line field (cursor in it) and a Point button (`PetView.compactField`; Pip's window is a key-capable non-activating panel, so the front app stays active). Answers show in Pip's bubble (the Say line) with **Show more**, which toggles the panel (the panel's ✕ does the same; Pip stays). Hold = talk (Pip only). Tap during Guide = next. Tap again, or click Pip while its field is open = hide. Menu Show Glance opens the panel directly. Pip's window grew to 300×310 for the field.
+- **Errors:** a failed question (`ChatModel.failed`) shows "Something went wrong." in Pip's bubble with Show more; the error card stays in the panel. Send/Cancel stays in the bubble.
+- **Selection highlight** (PointTool overlay + Pip's pointing pose) clears when its answer has finished streaming and speaking (`chat.busy` false and Pip's speech estimate over), on the next question, on hide, or on Stop (`ChatModel.clearsHighlight`). Guide's ring is never touched.
+- Selftest: 18 checks (surfaces, error bubble, highlight rules) in `Modes/Phase6Tests.swift`.
+
 ## Notes
 - UI (Pip and the chat panel) architecture, Guide API, decisions, audit A13–A16 and gaps: [docs/notes/UI-NOTES.md](notes/UI-NOTES.md)
 - Phase 3 (memory) background, root causes and open checks: [docs/notes/PHASE3-NOTES.md](notes/PHASE3-NOTES.md)

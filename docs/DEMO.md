@@ -25,8 +25,8 @@ Do not use the Lenovo `.../thinkpad-x1-carbon-gen-13-.../len101t0100` link: it r
 **2. Shopping (0:15-1:15)**
 1. Safari: open page 1, scroll 5 s. Open page 2 in a new tab, scroll 5 s.
 2. Open Notes, paste `demo/budget-note.txt` (select all in the file, copy, paste). Say: "I'm keeping my budget here."
-3. Open page 3. **Click Point, then drag a box over the spec area.** Then hold ⌥Space and say: "How's this different from the earlier ones?" Expected: a spoken answer using all three laptops and the EUR 1,200 / 16GB budget. (Needs Phase 3 memory, plus audit fix A19 so the budget note is found.)
-4. **Click Point, then drag a new box over the "Unified memory" line** (a new selection starts a fresh question). Hold ⌥Space: "What does this mean for me?" (Pointing = click Point, then drag a box. A ⌥Space tap only opens the chat; without a box, Glance sends the front window's text.)
+3. Open page 3. **Tap ⌥Space, click Point (next to Pip's one-line field), then drag a box over the spec area.** Then hold ⌥Space and say: "How's this different from the earlier ones?" Expected: a spoken answer using all three laptops and the EUR 1,200 / 16GB budget. (Needs Phase 3 memory, plus audit fix A19 so the budget note is found.)
+4. **Click Point next to Pip's field, then drag a new box over the "Unified memory" line** (a new selection starts a fresh question). Hold ⌥Space: "What does this mean for me?" (Pointing = click Point, then drag a box. A ⌥Space tap only shows Pip with a one-line field; without a box, Glance sends the front window's text. Answers show in Pip's bubble; **Show more** opens the full chat. The box clears once the answer is done.)
 
 **3. Learning (1:15-2:00)**
 "Now I need to hand in my assignment as a PDF." Hold the hotkey: "Show me how to export this as a PDF."
@@ -35,7 +35,7 @@ Reliable fallback: **TextEdit** (`/System/Applications/TextEdit.app`): File, Exp
 Optional (if v2 is built): click the wrong menu on purpose and let Glance correct her.
 
 **4. Privacy (2:00-2:20)**
-Run `open demo/mock-bank.html` (opens in the default browser; the page has a red DEMO banner). **Click Point and drag over the whole bank page** (the new selection resets the thread, so the preview appears). Hold ⌥Space: "Can you read this page?"
+Run `open demo/mock-bank.html` (opens in the default browser; the page has a red DEMO banner). **Click Point next to Pip's field and drag over the whole bank page** (the new selection resets the thread). Hold ⌥Space: "Can you read this page?" Pip asks Send/Cancel in its bubble; click **Show more** to open the chat and show the blacked-out preview.
 Expect: the preview shows the card, IBAN, PPSN, email and password field blacked out, and Glance says "I hid N sensitive items" (being added in Phase 4, audit A20; cut the line if it isn't built). Then **click the eye menu → Forget Last 15 Minutes**. Forget has no voice command. Turn on local-only mode only if Ollama is installed and tested (`ollama pull qwen2.5vl`); otherwise just mention it, and don't ask a question in local-only mode on stage.
 
 **5. Close (2:20-2:30)**
@@ -48,7 +48,7 @@ Expect: the preview shows the card, IBAN, PPSN, email and password field blacked
 - [ ] Turn on Do Not Disturb (Control Centre, Focus).
 - [ ] Quit unneeded apps (Mail, Messages, Slack, Chrome, etc.); hide Dock and extra menu-bar items if cluttered.
 - [ ] Local-only mode OFF at the start so the toggle is visible.
-- [ ] Pointing = click Point, then drag a box. Before each beat, check that the new selection's preview appears.
+- [ ] Pointing = tap ⌥Space, click Point next to Pip's field, then drag a box. The chat panel is hidden by default: click **Show more** on Pip's bubble to check the new selection's preview.
 - [ ] If local-only is shown live: Ollama running with qwen2.5vl, and one test question answered offline.
 - [ ] Mic and screen-recording permissions granted; test the hotkey once; volume up.
 - [ ] Close the mock bank page until beat 4.

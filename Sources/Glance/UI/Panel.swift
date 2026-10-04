@@ -9,6 +9,9 @@ final class PanelController {
     private let chat = ChatModel()
     private let pointTool = PointTool()
     let pet: PetController
+    /// Pip-only by default: the panel shows only after Show more or the menu's Show Glance.
+    private(set) var surface = GlanceSurface()
+    private var watchers: [AnyCancellable] = []
     /// Phase 3 memory, searched only when the user asks.
     var timeline: Timeline? {
         get { chat.timeline }
@@ -35,10 +38,15 @@ final class PanelController {
             guard let self else { return }
             self.chat.pointed(at: rect, on: screen)
             self.pet.point(at: rect, ring: false)
-            self.focusInput()
+            self.focusTyping()
         }
-        pointTool.onCancel = { [weak self] in self?.focusInput() }
+        pointTool.onCancel = { [weak self] in self?.focusTyping() }
         pet.onTap = { [weak self] in self?.petTapped() }
+        pet.onShowMore = { [weak self] in self?.showMore() }
+        pet.onQuiet = { [weak self] in self?.answerMaybeDone() }
+        chat.onShowMore = { [weak self] in self?.showMore() }
+        chat.onClearHighlight = { [weak self] in self?.clearSelectionHighlight() }
+        watchers = [chat.$busy.sink { [weak self] _ in DispatchQueue.main.async { self?.answerMaybeDone() } }]
         GuideHighlight.pet = pet
         // Integration: Pip stays on screen during a Guide session or while a Send/Cancel question is pending.
         pet.keepVisible = { [weak chat = self.chat] in (chat?.guide.active ?? false) || SendConfirm.shared.prompt != nil }
@@ -54,19 +62,51 @@ final class PanelController {
         panel.setFrameOrigin(NSPoint(x: x, y: panel.frame.minY))
     }
 
-    /// Clicking Pip opens the chat to message it (or hides the chat).
+    /// Clicking Pip opens its one-line field (or hides Glance when it's open).
     private func petTapped() {
-        if panel.isVisible { hide() } else { show(pointing: false); focusInput() }
+        if surface.pipTapped() { showPip(focus: true) } else { hide() }
     }
 
     private func hide() {
+        surface.hide()
         panel.orderOut(nil)
-        pointTool.clear()
+        clearSelectionHighlight()
+        pet.hideCompact()
         pet.goHome()
         pet.disappear()
     }
 
-    var isVisible: Bool { panel.isVisible }
+    /// Pip's bubble "Show more" (or the panel's ✕): the full chat with the complete answer and history. Pip stays.
+    func showMore() {
+        surface.showMore()
+        if surface.panel { showPanel(); pet.hideCompact() } else { panel.orderOut(nil); if surface.compact { pet.showCompact(focus: false) } }
+    }
+
+    private func showPip(focus: Bool) {
+        pet.appear()
+        if surface.compact { pet.showCompact(focus: focus) }
+    }
+
+    /// Where typing goes now: the panel's field when it's open, else Pip's one-line field.
+    private func focusTyping() {
+        if surface.panel { focusInput() } else { surface.compact = true; surface.pip = true; pet.showCompact(focus: true) }
+    }
+
+    /// The drag-box highlight lasts until its answer is done (streamed and spoken). Guide's ring is its own.
+    private func answerMaybeDone() {
+        if ChatModel.clearsHighlight(.answerSettled(busy: chat.busy, speaking: pet.isSpeaking),
+                                     guideActive: chat.guide.active, asked: chat.askedSinceSelection) {
+            clearSelectionHighlight()
+        }
+    }
+
+    private func clearSelectionHighlight() {
+        guard !chat.guide.active else { return }
+        pointTool.clear()
+        pet.stopPointing()
+    }
+
+    var isVisible: Bool { surface.pip || surface.panel }
 
     func showStatus(_ text: String) { chat.status = text }
 
@@ -84,7 +124,7 @@ final class PanelController {
         holdTimer = Task { [weak self] in
             try? await Task.sleep(for: .seconds(Config.holdToTalkSeconds))
             guard let self, !Task.isCancelled else { return }
-            if !self.panel.isVisible { self.show(pointing: false) }
+            if !self.isVisible { self.surface.hold(); self.pet.appear() }
             self.chat.listening = true
         }
         chat.startRecording()
@@ -97,35 +137,28 @@ final class PanelController {
         holdTimer?.cancel()
         if Self.isTap(pressed: pressed, released: time) {
             chat.discardRecording()
-            switch Self.tapAction(guideActive: chat.guide.active, panelVisible: panel.isVisible) {
+            switch surface.tap(guideActive: chat.guide.active) {
             case .guideNext: chat.guide.next() // during a Guide session a tap means "next"
             case .hide: hide()
-            case .showToType: show(pointing: false); focusInput()
+            case .showToType: showPip(focus: true) // Pip + its one-line field; no panel, no pointing overlay
             }
         } else {
             // The release can beat the hold timer; the question needs the panel either way.
-            if !panel.isVisible { show(pointing: false) }
+            if !isVisible { surface.hold(); pet.appear() }
             chat.askFromRecording()
         }
-    }
-
-    enum TapAction: Equatable { case guideNext, hide, showToType }
-
-    /// A ⌥Space tap never starts pointing; the Point button does.
-    nonisolated static func tapAction(guideActive: Bool, panelVisible: Bool) -> TapAction {
-        guideActive ? .guideNext : panelVisible ? .hide : .showToType
     }
 
     nonisolated static func isTap(pressed: TimeInterval, released: TimeInterval) -> Bool {
         released - pressed < Config.holdToTalkSeconds
     }
 
-    /// Menu "Show Glance": like a tap, ready to type.
+    /// Menu "Show Glance": the full panel (or hide everything).
     func toggle() {
-        if panel.isVisible { hide() } else { show(pointing: false); focusInput() }
+        if surface.menuShow() { pet.appear(); showPanel(); focusInput() } else { hide() }
     }
 
-    private func show(pointing: Bool) {
+    private func showPanel() {
         if let screen = NSScreen.main {
             let frame = screen.visibleFrame
             // Left of Pip's top-right home, so Pip and its bubble don't cover the chat.
@@ -133,8 +166,6 @@ final class PanelController {
                                          y: frame.maxY - panel.frame.height - 24))
         }
         panel.orderFrontRegardless()
-        pet.appear()
-        if pointing { pointTool.start() }
     }
 
     private func focusInput() {
@@ -184,7 +215,26 @@ final class ChatModel: ObservableObject {
         }
     }
     var onPoint: (() -> Void)?
+    var onShowMore: (() -> Void)?
+    /// Clears the drag-box highlight (PointTool overlay and Pip's pointing pose).
+    var onClearHighlight: (() -> Void)?
+    /// A question was asked about the current selection; its highlight goes once that answer is done.
+    private(set) var askedSinceSelection = false
+    /// The last question failed (error card in the panel); Pip's bubble offers Show more.
+    @Published var failed = false
     var timeline: Timeline?
+
+    enum HighlightEvent { case answerSettled(busy: Bool, speaking: Bool), newQuestion, hide, stop }
+
+    /// When the drag-box highlight goes: its answer finished streaming and speaking, a new question, hide or Stop.
+    nonisolated static func clearsHighlight(_ e: HighlightEvent, guideActive: Bool, asked: Bool) -> Bool {
+        guard !guideActive else { return false } // Guide controls its own ring
+        switch e {
+        case .answerSettled(let busy, let speaking): return asked && !busy && !speaking
+        case .newQuestion: return asked
+        case .hide, .stop: return true
+        }
+    }
 
     @Published var mode = Mode.explain
     lazy var guide = GuideSession(chat: self)
@@ -265,7 +315,9 @@ final class ChatModel: ObservableObject {
 
     /// A new selection starts a new conversation.
     func pointed(at rect: CGRect, on screen: NSScreen) {
-        stop()
+        stop(clearHighlight: false) // the new selection is already highlighted
+        askedSinceSelection = false
+        failed = false
         serial += 1
         turns = []
         history = []
@@ -287,6 +339,7 @@ final class ChatModel: ObservableObject {
                 return packet
             } catch {
                 status = "Couldn't read the screen: \(error.localizedDescription)"
+                failed = true
                 return nil
             }
         }
@@ -303,7 +356,8 @@ final class ChatModel: ObservableObject {
 
     func point() { onPoint?() }
 
-    func stop() {
+    func stop(clearHighlight: Bool = true) {
+        if clearHighlight, Self.clearsHighlight(.stop, guideActive: guide.active, asked: askedSinceSelection) { onClearHighlight?() }
         guide.stop()
         speaker.stop()
         answering?.cancel()
@@ -323,6 +377,9 @@ final class ChatModel: ObservableObject {
             _ = guide.handle(question)
             return
         }
+        if Self.clearsHighlight(.newQuestion, guideActive: false, asked: askedSinceSelection) { onClearHighlight?() }
+        askedSinceSelection = true
+        failed = false
         serial += 1
         busy = true
         turns.append(Turn(kind: .user, text: shown))
@@ -332,6 +389,7 @@ final class ChatModel: ObservableObject {
             let provider: AIProvider
             do { provider = try Providers.current() } catch {
                 turns.append(Turn(kind: .notice, text: error.localizedDescription))
+                failed = true
                 return
             }
             let source = capture
@@ -433,6 +491,7 @@ final class ChatModel: ObservableObject {
                 guard !Task.isCancelled else { return }
                 if turns[index].text.isEmpty { turns.remove(at: index) }
                 turns.append(Turn(kind: .notice, text: error.localizedDescription))
+                failed = true
             }
         }
     }
@@ -461,6 +520,8 @@ struct PanelView: View {
                 .help(chat.muted ? "Answers are text only. Click to read them aloud" : "Answers are read aloud. Click to mute")
                 Button { chat.point() } label: { Label("Point", systemImage: "viewfinder") }
                     .help("Drag a box over something on screen")
+                Button { chat.onShowMore?() } label: { Image(systemName: "xmark") }
+                    .help("Close the chat (Pip stays)")
             }
             if chat.listening {
                 Label("Listening… release \(Config.hotkeyDescription) to ask", systemImage: "mic.fill")
@@ -586,4 +647,48 @@ extension ChatModel {
         guard let first else { return true }
         return first != now
     }
+}
+
+/// Which parts of Glance are on screen (pure; selftested). Pip-only by default: a tap shows Pip with its one-line
+/// field; the panel appears only after Show more or the menu's Show Glance.
+struct GlanceSurface: Equatable {
+    var pip = false
+    var compact = false
+    var panel = false
+
+    enum TapAction: Equatable { case guideNext, hide, showToType }
+
+    /// ⌥Space tap. Never starts pointing; the Point buttons do.
+    mutating func tap(guideActive: Bool) -> TapAction {
+        if guideActive { return .guideNext }
+        if pip || panel { self = GlanceSurface(); return .hide }
+        pip = true
+        compact = true
+        return .showToType
+    }
+
+    /// Show more / ✕ toggle the panel; Pip stays.
+    mutating func showMore() {
+        panel.toggle()
+        pip = true
+    }
+
+    /// Menu Show Glance: true = show the panel, false = hide everything.
+    mutating func menuShow() -> Bool {
+        if pip || panel { self = GlanceSurface(); return false }
+        pip = true
+        panel = true
+        return true
+    }
+
+    /// Clicking Pip: true = open the one-line field, false = hide.
+    mutating func pipTapped() -> Bool {
+        if compact || panel { self = GlanceSurface(); return false }
+        pip = true
+        compact = true
+        return true
+    }
+
+    mutating func hold() { pip = true }
+    mutating func hide() { self = GlanceSurface() }
 }

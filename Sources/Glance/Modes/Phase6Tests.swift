@@ -85,11 +85,34 @@ enum Phase6Tests {
         if let saved { UserDefaults.standard.set(saved, forKey: key) } else { UserDefaults.standard.removeObject(forKey: key) }
         check(Config.guideNudgeSeconds == 20 && Config.guideDebounce == 0.6, "guide v2: 20 s nudge, 600 ms debounce")
 
-        // 7. ⌥Space tap: show Pip + panel ready to type, never the pointing overlay
-        let T = PanelController.tapAction
-        check(T(false, false) == .showToType, "tap: hidden panel → show, ready to type (no pointing)")
-        check(T(false, true) == .hide, "tap: visible panel → hide")
-        check(T(true, false) == .guideNext && T(true, true) == .guideNext, "tap: during Guide → next")
+        // 7. Pip-only surfaces: a tap shows Pip + its one-line field (focused), never the panel or pointing
+        var ui = GlanceSurface()
+        check(ui == GlanceSurface() && !ui.panel, "pip ui: panel hidden by default")
+        check(ui.tap(guideActive: false) == .showToType && ui.pip && ui.compact && !ui.panel, "pip ui: tap → Pip + one-line field, no panel")
+        ui.showMore()
+        check(ui.panel && ui.pip, "pip ui: Show more opens the panel, Pip stays")
+        ui.showMore()
+        check(!ui.panel && ui.pip, "pip ui: Show more again (or ✕) closes the panel, Pip stays")
+        check(ui.tap(guideActive: false) == .hide && ui == GlanceSurface(), "pip ui: tap again hides everything")
+        check(ui.tap(guideActive: true) == .guideNext && ui == GlanceSurface(), "pip ui: tap during Guide → next")
+        var menu = GlanceSurface()
+        check(menu.menuShow() && menu.panel && !menu.menuShow() && menu == GlanceSurface(), "pip ui: menu Show Glance opens the panel, again hides")
+        var pip = GlanceSurface()
+        pip.hold()
+        check(pip.pip && !pip.panel && !pip.compact, "pip ui: hold = talk, Pip only")
+        check(pip.pipTapped() && pip.compact && !pip.pipTapped() && pip == GlanceSurface(), "pip ui: click Pip opens the field, again hides")
+        check(PetView.bubbleText(state: .idle, said: nil, reply: nil, spoken: nil, dismissed: nil, failed: true) == PetView.failedText,
+              "pip ui: an error shows 'Something went wrong' in the bubble")
+
+        // 7b. Selection highlight: cleared when its answer is done, on a new question, hide or Stop; never Guide's ring
+        let C = ChatModel.clearsHighlight
+        check(!C(.answerSettled(busy: false, speaking: false), false, false), "highlight: kept until a question is asked")
+        check(!C(.answerSettled(busy: true, speaking: false), false, true), "highlight: kept while the answer streams")
+        check(!C(.answerSettled(busy: false, speaking: true), false, true), "highlight: kept while the answer is spoken")
+        check(C(.answerSettled(busy: false, speaking: false), false, true), "highlight: cleared when the answer is done")
+        check(C(.newQuestion, false, true) && !C(.newQuestion, false, false), "highlight: cleared by a new question, not the first")
+        check(C(.hide, false, false) && C(.stop, false, true), "highlight: cleared on hide and Stop")
+        check(!C(.hide, true, true) && !C(.answerSettled(busy: false, speaking: false), true, true), "highlight: Guide's ring untouched")
 
         // 8. Screen-now context for a question without a selection
         let rows = [Timeline.Snippet(ts: 100, app: "Pages", title: "Essay", url: nil, text: "old"),

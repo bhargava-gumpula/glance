@@ -8,6 +8,8 @@ struct PetBubbleView: View {
     /// Phase 4: Send / Cancel buttons under the text while a confirm is waiting.
     var onSend: (() -> Void)? = nil
     var onCancel: (() -> Void)? = nil
+    /// "Show more": opens the full chat panel.
+    var onMore: (() -> Void)? = nil
     let onClose: () -> Void
 
     /// Text area cap: with the tag, padding and tail the bubble stays under ~150 pt.
@@ -55,6 +57,12 @@ struct PetBubbleView: View {
                         Button("Send", action: onSend).buttonStyle(.borderedProminent)
                     }
                     .controlSize(.small)
+                }
+                if let onMore {
+                    HStack {
+                        Spacer()
+                        Button("Show more", action: onMore).buttonStyle(.link).font(.system(size: 11, weight: .semibold))
+                    }
                 }
             }
             .padding(10)
