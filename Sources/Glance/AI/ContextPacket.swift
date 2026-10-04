@@ -16,22 +16,28 @@ struct ContextPacket: Sendable {
     /// Unredacted copy, kept in memory only. Sent only when the user explicitly asks Glance to look at hidden data.
     let raw: Content
     var redactions: Int
-    /// Earlier snippets from the on-device timeline that match the question, already redacted.
+    /// The recent-activity context from the on-device timeline (activity log + page text), already redacted.
     /// Always redacted, even when the user asks to reveal the selection. Empty unless a question was asked.
     var memory = ""
+    var memoryPages = 0, memoryApps = 0, memoryHits = 0
+    /// Newest timeline row in `memory`; follow-ups rebuild it when something newer was stored.
+    var memoryNewest = 0.0
 
-    /// Adds matching timeline snippets, redacted here, before anything can reach `send()`.
-    func withMemory(_ snippets: [Timeline.Snippet], now: Date = Date()) -> ContextPacket {
+    /// For a question asked without pointing at anything: memory only, no selection, no image.
+    static func memoryOnly() -> ContextPacket {
+        let empty = Content(selectionImage: Data(), selectedText: "")
+        return ContextPacket(appName: "", redacted: empty, raw: empty, redactions: 0)
+    }
+
+    /// Adds (or replaces) the memory context, redacted here as one block before anything can reach `send()`.
+    func withMemory(_ built: MemoryContext.Built) -> ContextPacket {
         var copy = self
-        var hits = 0
-        copy.memory = snippets.map { s in
-            let mins = max(0, Int(now.timeIntervalSince1970 - s.ts) / 60)
-            let header = [s.app, s.title, s.url.flatMap { URL(string: $0)?.host() }].compactMap { $0 }.joined(separator: " · ")
-            let r1 = Redactor.redact(header), r2 = Redactor.redact(s.text)
-            hits += r1.hits + r2.hits
-            return "[\(mins) min ago] \(r1.text)\n\(r2.text)"
-        }.joined(separator: "\n\n")
-        copy.redactions += hits
+        let r = Redactor.redact(built.text)
+        copy.memory = r.text
+        copy.memoryHits = r.hits
+        copy.memoryPages = built.pages
+        copy.memoryApps = built.apps
+        copy.memoryNewest = built.newest
         return copy
     }
 
@@ -43,6 +49,8 @@ struct ContextPacket: Sendable {
         let imagesSent: Bool
         let selectedText: String
         let memory: String
+        let memoryPages: Int
+        let memoryApps: Int
         let redactions: Int
         let revealed: Bool
     }
@@ -66,20 +74,26 @@ struct ContextPacket: Sendable {
             turns[first] = packet.firstMessage(content, question: turns[first].text, imagesAllowed: provider.supportsImages)
             if announce {
                 showPreview(Preview(providerName: provider.name, image: NSImage(data: content.selectionImage),
-                                    imagesSent: provider.supportsImages, selectedText: content.selectedText, memory: packet.memory,
-                                    redactions: reveal ? 0 : packet.redactions + questionHits, revealed: reveal))
+                                    imagesSent: provider.supportsImages && !content.selectionImage.isEmpty,
+                                    selectedText: content.selectedText, memory: packet.memory,
+                                    memoryPages: packet.memoryPages, memoryApps: packet.memoryApps,
+                                    redactions: (reveal ? 0 : packet.redactions + questionHits) + packet.memoryHits, revealed: reveal))
             }
         }
         return provider.stream(system: mode.system, messages: turns)
     }
 
     func firstMessage(_ content: Content, question: String, imagesAllowed: Bool) -> ChatMessage {
-        var text = "App: \(appName)\nText in my selection (OCR):\n\(content.selectedText.isEmpty ? "(none)" : content.selectedText)\n"
+        let pointed = !content.selectionImage.isEmpty
+        var text = pointed
+            ? "App: \(appName)\nText in my selection (OCR):\n\(content.selectedText.isEmpty ? "(none)" : content.selectedText)\n"
+            : "I didn't point at anything on screen.\n"
         if !memory.isEmpty {
-            text += "\nWhat I looked at earlier on this Mac (Glance's on-device memory, matching lines only):\n\(memory)\n"
+            text += "\nWhat I've been doing on this Mac in the last \(Config.retentionMinutes) min "
+                + "(Glance's on-device memory, redacted):\n\(memory)\n"
         }
         text += "\nMy question: \(question)"
-        return ChatMessage(role: .user, text: text, images: imagesAllowed ? [content.selectionImage] : [])
+        return ChatMessage(role: .user, text: text, images: imagesAllowed && pointed ? [content.selectionImage] : [])
     }
 
     enum CaptureError: LocalizedError {

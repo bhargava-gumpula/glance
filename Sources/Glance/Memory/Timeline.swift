@@ -4,7 +4,7 @@ import SQLite3
 private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
 /// The on-device memory: one row per stored snapshot (app, window title, URL, OCR text, small thumbnail).
-/// Never leaves the Mac by itself; `snippets(matching:)` feeds ContextPacket only when the user asks.
+/// Never leaves the Mac by itself; `recent(since:)` feeds MemoryContext, which reaches ContextPacket only when the user asks.
 final class Timeline: @unchecked Sendable {
     struct Snippet: Sendable, Equatable {
         let ts: Double
@@ -134,97 +134,6 @@ final class Timeline: @unchecked Sendable {
             bind(st, 1, query)
             return sqlite3_step(st) == SQLITE_ROW ? Int(sqlite3_column_int(st, 0)) : 0
         }
-    }
-
-    /// Best-matching snapshot per window for any of `terms`, oldest first. A window's whole text is kept when it fits
-    /// `Config.memorySnippetChars`, otherwise only the lines that contain a term.
-    /// `fillRecent`: when fewer than 3 windows match, add the newest other windows (for "the earlier ones").
-    func snippets(matching terms: [String], since ts: Double, limit: Int = Config.memorySnippetLimit,
-                  fillRecent: Bool = false) throws -> [Snippet] {
-        var out = try matches(terms, since: ts, limit: limit)
-        if fillRecent, out.count < 3 {
-            var seen = Set(out.map { "\($0.app)|\($0.title ?? "")" })
-            for row in try recent(since: ts) where out.count < limit && seen.insert("\(row.app)|\(row.title ?? "")").inserted {
-                out.append(Snippet(ts: row.ts, app: row.app, title: row.title, url: row.url,
-                                   text: Timeline.matchingLines(row.text, terms: terms)))
-            }
-        }
-        return out.sorted { $0.ts < $1.ts }
-    }
-
-    private func matches(_ terms: [String], since ts: Double, limit: Int) throws -> [Snippet] {
-        guard let match = Timeline.ftsQuery(terms) else { return [] }
-        return try locked {
-            let st = try prepare("""
-                SELECT s.ts, s.app, s.window_title, s.url, s.text FROM snapshots_fts f JOIN snapshots s ON s.id = f.rowid
-                WHERE snapshots_fts MATCH ? AND s.ts >= ? ORDER BY f.rank
-                """)
-            defer { sqlite3_finalize(st) }
-            bind(st, 1, match)
-            sqlite3_bind_double(st, 2, ts)
-            var out: [Snippet] = [], seen = Set<String>()
-            while sqlite3_step(st) == SQLITE_ROW, out.count < limit {
-                func col(_ i: Int32) -> String? { sqlite3_column_text(st, i).map { String(cString: $0) } }
-                let key = "\(col(1) ?? "")|\(col(2) ?? "")"
-                guard seen.insert(key).inserted else { continue }
-                out.append(Snippet(ts: sqlite3_column_double(st, 0), app: col(1) ?? "", title: col(2), url: col(3),
-                                   text: Timeline.matchingLines(col(4) ?? "", terms: terms)))
-            }
-            return out
-        }
-    }
-
-    /// Questions about earlier things ("the earlier ones", "compare", "before") also get recent windows.
-    static func refersToEarlier(_ q: String) -> Bool {
-        q.lowercased().range(of: #"earlier|before|previous|last (one|page|few)|other (one|page)s?|those|compar|differen|\bvs\b|versus"#,
-                             options: .regularExpression) != nil
-    }
-
-    // MARK: Query helpers (pure, selftested)
-
-    private static let stopWords: Set<String> = [
-        "the", "and", "for", "are", "but", "not", "you", "your", "this", "that", "with", "what", "how", "why", "who",
-        "from", "they", "them", "was", "were", "has", "have", "had", "its", "it's", "can", "does", "did", "will",
-        "one", "ones", "these", "those", "than", "then", "there", "here", "about", "into", "which", "when", "where",
-        "earlier", "before", "different", "difference", "between", "other", "same", "more", "less", "some", "any",
-        "just", "also", "out", "all", "get", "use", "see", "show", "tell", "me", "my", "is", "of", "to", "in", "on",
-        "a", "an", "or", "be", "do", "it", "as", "at", "by", "if", "so", "up", "we", "i",
-    ]
-
-    /// Lowercased search words from the question and the selection, minus stop words, at most 40.
-    static func terms(from texts: [String]) -> [String] {
-        var seen = Set<String>(), out: [String] = []
-        for text in texts {
-            for raw in text.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }) {
-                let w = String(raw)
-                guard w.count >= 2, !stopWords.contains(w), seen.insert(w).inserted else { continue }
-                out.append(w)
-                if out.count == 40 { return out }
-            }
-        }
-        return out
-    }
-
-    /// `"a" OR "b"`; quoting keeps FTS5 syntax characters out of MATCH.
-    static func ftsQuery(_ terms: [String]) -> String? {
-        let q = terms.map { "\"\($0.replacingOccurrences(of: "\"", with: ""))\"" }.joined(separator: " OR ")
-        return q.isEmpty ? nil : q
-    }
-
-    static func matchingLines(_ text: String, terms: [String]) -> String {
-        if text.count <= Config.memorySnippetChars { return text }
-        var out = ""
-        let lines = text.split(separator: "\n")
-        for line in lines {
-            let words = Set(line.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init))
-            guard terms.contains(where: words.contains) else { continue }
-            if out.count + line.count > Config.memorySnippetChars { break }
-            out += line + "\n"
-        }
-        if out.isEmpty { // nothing matched (a recent window): its first lines
-            for line in lines where out.count + line.count <= Config.memorySnippetChars { out += line + "\n" }
-        }
-        return out.trimmingCharacters(in: .newlines)
     }
 
     // MARK: SQLite plumbing

@@ -47,10 +47,13 @@ enum ActiveApp {
             }
             queue += (ax(e, kAXChildrenAttribute) as [AXUIElement]?) ?? []
         }
-        // Only a complete walk that reached the page counts as knowing; otherwise unknown (treated as private).
-        let complete = sawWebArea && next >= queue.count
-        w.isPrivate = isPrivate ? true : (complete ? false : nil)
-        if w.isPrivate != nil { cache = (win, w.title, w.url, w.isPrivate!, Date()) }
+        // Owner decision: a readable window without private markers is a normal window, even when the walk didn't
+        // reach the page or its URL. It is stored without a URL (the blocklist still checks the title).
+        w.isPrivate = isPrivate
+        if !sawWebArea || next < queue.count {
+            log.notice("memory: browser window only partly readable (page reached: \(sawWebArea, privacy: .public)); no private markers seen")
+        }
+        cache = (win, w.title, w.url, isPrivate, Date())
         return (app, w, win)
     }
 

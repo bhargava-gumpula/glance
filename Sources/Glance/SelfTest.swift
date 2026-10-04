@@ -301,25 +301,43 @@ enum SelfTest {
             let tl2 = try Timeline(path: dbPath)
             check(try tl2.version == 1 && tl2.count() == 4, "timeline: reopening keeps rows and schema")
 
-            let q = "How is this different from the earlier ones?"
-            check(Timeline.terms(from: [q]).isEmpty, "memory terms: a vague question adds no search words")
-            let selection = "MacBook Air 13-inch\n16GB unified memory\nUp to 18 hours battery life\n€1,199"
-            let terms = Timeline.terms(from: [q, selection])
-            let found = try tl.snippets(matching: terms, since: now - 900)
-            check(Set(found.map(\.title)) == ["ThinkPad X1 Carbon", "Zenbook 14", "Notes"],
-                  "memory: the question + selection finds both laptops and the budget note, not Slack")
-            check(found.first { $0.app == "Notes" }?.text.contains("Budget: €1,200") == true
-                  && found.first { $0.app == "Notes" }?.text.contains("16GB RAM") == true, "memory: a short note is kept whole (budget included)")
-            check(Timeline.matchingLines((1...60).map { "line \($0) filler text" }.joined(separator: "\n") + "\nbattery 18h", terms: ["battery"])
-                  == "battery 18h", "memory: a long page keeps only matching lines")
-            let vague = try tl.snippets(matching: ["zzz"], since: now - 900, fillRecent: true)
-            check(vague.count == 4, "memory: \"the earlier ones\" with no word matches falls back to recent windows")
-            check(Timeline.refersToEarlier(q) && !Timeline.refersToEarlier("Is 16 GB enough?"), "memory: earlier-reference detection")
-            check((try? tl.snippets(matching: ["a\"b", "c*", "NEAR(", "-x"], since: 0)) != nil, "memory: FTS query is escaped")
-            check(try tl.snippets(matching: terms, since: now - 300).count == 1, "memory: only the retention window is searched")
+            // Memory context: every distinct page in retention, de-duplicated, activity log first.
+            let ctx = MemoryContext.build(rows: try tl.recent(since: now - 900), now: Date(timeIntervalSince1970: now))!
+            check(ctx.pages == 4 && ctx.apps == 3 && ctx.trimmedPages == 0 && ctx.text.hasPrefix("Activity log"),
+                  "memory context: all 4 windows from 3 apps, activity log first")
+            check(ctx.text.contains("Budget: €1,200 max") && ctx.text.contains("lunch at 1?"), "memory context: full page text, no keyword filter")
+            check(ctx.text.contains("10 min ago: Safari · ThinkPad X1 Carbon") && ctx.text.contains("— 32GB memory"),
+                  "memory context: activity log has time, app, title and an extracted gist")
+            let thinkpad = ctx.text.range(of: "### Safari · ThinkPad")!.lowerBound, slack = ctx.text.range(of: "### Slack")!.lowerBound
+            check(thinkpad < slack, "memory context: pages oldest first")
 
-            // A19: the demo gate with the real note and long spec pages. The budget line shares no word with the
-            // specs, so it only survives because the short note is sent whole.
+            // De-duplication across snapshots of the same page: newest version first, no repeated lines.
+            let snaps = [Timeline.Snippet(ts: 100, app: "Aside", title: "Buy MacBook Pro", url: "https://www.apple.com/shop/buy-mac/macbook-pro",
+                                          text: "Buy MacBook Pro\nM5 chip\n16GB unified memory\nFrom $1,599"),
+                         Timeline.Snippet(ts: 103, app: "Aside", title: "Buy MacBook Pro", url: "https://www.apple.com/shop/buy-mac/macbook-pro",
+                                          text: "Buy MacBook Pro\n16GB unified memory\n24GB unified memory\nFrom $1,599")]
+            let d = MemoryContext.build(rows: snaps, now: Date(timeIntervalSince1970: 200))!
+            check(d.pages == 1 && d.text.components(separatedBy: "16GB unified memory").count == 3
+                  && d.text.contains("24GB unified memory\nFrom $1,599\nM5 chip"),
+                  "memory context: one page, repeated lines dropped, newest version first (plus older-only lines)")
+
+            // Budget: the activity log stays whole; the oldest pages shrink to key lines first.
+            let big = (0..<6).map { i in Timeline.Snippet(ts: Double(i * 30), app: "Aside", title: "Page \(i)", url: "https://example.com/\(i)",
+                text: "Model \(i) — 16GB memory, $1,\(i)99\n" + (1...300).map { "filler line \($0) for page \(i)" }.joined(separator: "\n")) }
+            let full = MemoryContext.build(rows: big, now: Date(timeIntervalSince1970: 600), maxChars: 1_000_000)!
+            let cut = MemoryContext.build(rows: big, now: Date(timeIntervalSince1970: 600), maxChars: full.text.count / 2)!
+            check(cut.text.count <= full.text.count / 2 + 20 && cut.trimmedPages > 0 && cut.pages == 6, "budget: trimmed to fit (\(cut.trimmedPages) pages)")
+            check((0..<6).allSatisfy { cut.text.contains("Page \($0)") && cut.text.contains("Model \($0) — 16GB memory") },
+                  "budget: every page keeps its title and key lines")
+            check(!cut.text.contains("filler line 1 for page 0\n") && cut.text.contains("filler line 1 for page 5"),
+                  "budget: the oldest pages are trimmed first, the newest keep their text")
+            check(Config.memoryContextMaxChars == 60_000, "budget: default 60k characters")
+            let tb = Date()
+            let timed = ContextPacket.memoryOnly().withMemory(MemoryContext.build(rows: big, now: Date(timeIntervalSince1970: 600))!)
+            print(String(format: "      memory context: build + redact %d characters in %.0f ms (once per question)",
+                         timed.memory.count, Date().timeIntervalSince(tb) * 1000))
+
+            // A19 / demo gate: the budget note is in the context whatever the question says.
             let noteURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
                 .appendingPathComponent("../../demo/budget-note.txt")
             let note = (try? String(contentsOf: noteURL, encoding: .utf8)) ?? ""
@@ -330,18 +348,38 @@ enum SelfTest {
             let filler = (1...40).map { "Shop accessories, compare models and find support near you \($0)." }.joined(separator: "\n")
             try demo.insert(ts: now - 500, app: "Safari", bundleID: "com.apple.Safari", title: "ThinkPad X1 Carbon Gen 13 | Lenovo IE",
                             url: "https://www.lenovo.com/ie/en/c/laptops/thinkpad/thinkpadx1/",
-                            text: "ThinkPad X1 Carbon Gen 13\n\(filler)\nMemory: up to 32GB LPDDR5x\nBattery: 57Wh, up to 15 hours\nWeight: from 0.99 kg\nFrom €1,849.00", thumb: nil)
+                            text: "ThinkPad X1 Carbon Gen 13\n\(filler)\nMemory: up to 32GB LPDDR5x\nBattery: 57Wh, up to 15 hours\nFrom €1,849.00", thumb: nil)
             try demo.insert(ts: now - 400, app: "Safari", bundleID: "com.apple.Safari", title: "Zenbook | Laptops | ASUS Ireland",
                             url: "https://www.asus.com/ie/laptops/for-home/zenbook/",
-                            text: "ASUS Zenbook 14 OLED\n\(filler)\n16GB LPDDR5X memory\n75Wh battery\n1.2 kg\n€1,099", thumb: nil)
+                            text: "ASUS Zenbook 14 OLED\n\(filler)\n16GB LPDDR5X memory\n75Wh battery\n€1,099", thumb: nil)
             try demo.insert(ts: now - 300, app: "Notes", bundleID: "com.apple.Notes", title: "Notes", url: nil, text: note, thumb: nil)
-            let gateSelection = "Chip\nApple M4 chip\nMemory\n16GB unified memory\nStorage\n256GB SSD\nBattery and Power\nUp to 18 hours Apple TV app movie playback\nWeight 1.24 kg"
-            let gate = try demo.snippets(matching: Timeline.terms(from: [q, gateSelection]), since: now - 900,
-                                         fillRecent: Timeline.refersToEarlier(q))
-            check(gate.count == 3 && gate.contains { $0.app == "Notes" && $0.text.contains("Budget: €1,200 max") },
-                  "A19: the gate question sends the note with its budget line, plus both laptops")
-            check(gate.contains { $0.title?.hasPrefix("ThinkPad") == true && $0.text.contains("32GB") && !$0.text.contains("support near you 7.") },
-                  "A19: long pages still send only their matching lines")
+            let gate = MemoryContext.build(rows: try demo.recent(since: now - 600))!
+            check(gate.pages == 3 && gate.text.contains("Budget: €1,200 max") && gate.text.contains("32GB") && gate.text.contains("€1,099"),
+                  "A19: the gate context has both laptops and the budget line")
+
+            // Owner's case: MacBook pages in Aside for 2+ minutes, then a voice question with no selection.
+            let macs: [(String, String, String)] = [
+                ("Buy MacBook Air 13-inch M5", "macbook-air/13-inch-m5", "MacBook Air 13-inch\nM5 chip, 10-core CPU\n16GB unified memory\nFrom $1,099"),
+                ("Buy MacBook Air 15-inch M5", "macbook-air/15-inch-m5", "MacBook Air 15-inch\nM5 chip\n24GB unified memory\nFrom $1,299"),
+                ("Buy MacBook Pro 14-inch M5", "macbook-pro/14-inch-m5", "MacBook Pro 14-inch\nM5 chip, 10-core CPU, 10-core GPU\n16GB\nFrom $1,599"),
+                ("Buy MacBook Pro 16-inch M5 Max", "macbook-pro/16-inch-m5-max", "MacBook Pro 16-inch\nM5 Max\n48GB unified memory\nFrom $3,499"),
+            ]
+            var replay: [Timeline.Snippet] = []
+            for (i, m) in macs.enumerated() {
+                for k in 0..<12 { // 36 s per page, snapshots every 3 s, some scrolled
+                    replay.append(Timeline.Snippet(ts: now - 170 + Double(i * 40 + k * 3), app: "Aside", title: m.0 + " - Apple - Aside",
+                                                   url: "https://www.apple.com/us-edu/shop/buy-mac/" + m.1,
+                                                   text: k % 2 == 0 ? m.2 : m.2 + "\nCompare Mac models\nAdd to Bag"))
+                }
+            }
+            replay.append(Timeline.Snippet(ts: now - 5, app: "Claude", title: "Claude", url: nil, text: "unrelated chat"))
+            let owner = MemoryContext.build(rows: replay, now: Date(timeIntervalSince1970: now))!
+            check(owner.pages == 5 && macs.allSatisfy { owner.text.contains($0.0) && owner.text.contains($0.2.components(separatedBy: "\n").last!) },
+                  "owner replay: all four MacBook pages (title, URL, price) are in the context")
+            let ownerPacket = ContextPacket.memoryOnly().withMemory(owner)
+            let ownerMsg = ownerPacket.firstMessage(ownerPacket.redacted, question: "compare the models I looked at", imagesAllowed: true)
+            check(ownerMsg.images.isEmpty && ownerMsg.text.hasPrefix("I didn't point at anything") && ownerMsg.text.contains("MacBook Pro 16-inch")
+                  && ownerMsg.text.contains("$3,499"), "owner replay: a question with no selection still carries the memory, no image")
 
             try tl.trim(olderThan: now - 500)
             check(try tl.count() == 3 && (try tl.count(matching: "\"thinkpad\"")) == 0, "retention: old rows and FTS entries deleted")
@@ -367,7 +405,8 @@ enum SelfTest {
         check(skip("com.apple.Notes", title: "Notes", priv: nil) == nil, "allowed: Notes (not a browser)")
         check(skip("com.apple.Safari", url: "https://apple.com", priv: nil) == "private window", "exclusion: browser window we can't read")
         check(skip("com.apple.Safari", title: "Online Banking", url: nil) == "blocked site"
-              && skip("com.apple.Safari", title: "Home", url: nil) == "unknown page", "exclusion: browser page without a URL")
+              && skip("com.apple.Safari", title: "Mac mini - Apple", url: nil) == nil,
+              "browser page without a readable URL: stored unless its title is blocked")
         check(skip("com.google.Chrome", url: "https://apple.com", priv: true) == "private window", "exclusion: incognito window")
         check(Exclusions.looksPrivate("Private Browsing") && Exclusions.looksPrivate("New Incognito Tab")
               && !Exclusions.looksPrivate("MacBook Air - Apple (IE)"), "private markers")
@@ -396,16 +435,18 @@ enum SelfTest {
         check(thumbImg?.pixelsWide == Config.thumbnailMaxDimension && thumbData.count < 40_000,
               "thumbnail: \(thumbImg?.pixelsWide ?? 0) px wide, \(thumbData.count / 1024) kB (never full frames)")
 
-        // Phase 3: memory snippets are redacted before they reach the packet, and stay redacted on reveal
-        let secretSnippet = Timeline.Snippet(ts: now - 120, app: "Safari", title: "Order for Aoife Kelly",
-                                             url: "https://shop.ie/orders", text: "Card 4242 4242 4242 4242\nmail aoife.k@example.ie\n16GB memory")
-        let memPacket = packet.withMemory([secretSnippet], now: Date(timeIntervalSince1970: now))
+        // Phase 3: the whole memory block is redacted before it reaches the packet, and stays redacted on reveal
+        let secret = MemoryContext.build(rows: [Timeline.Snippet(ts: now - 120, app: "Safari", title: "Order for Aoife Kelly",
+            url: "https://shop.ie/orders", text: "Card 4242 4242 4242 4242\nmail aoife.k@example.ie\n16GB memory")],
+            now: Date(timeIntervalSince1970: now))!
+        let memPacket = packet.withMemory(secret)
         check(memPacket.memory.contains("[CARD]") && memPacket.memory.contains("[EMAIL]") && !memPacket.memory.contains("4242")
-              && !memPacket.memory.contains("example.ie") && memPacket.memory.contains("16GB memory"),
-              "memory: snippet redacted inside the packet  →  \(memPacket.memory.replacingOccurrences(of: "\n", with: " | "))")
-        check(memPacket.memory.contains("[2 min ago]") && memPacket.redactions >= 2, "memory: age and redaction count")
+              && !memPacket.memory.contains("example.ie") && !memPacket.memory.contains("Aoife") && memPacket.memory.contains("16GB memory"),
+              "memory: whole block redacted (log, titles and text)")
+        check(memPacket.memory.contains("2 min ago") && memPacket.memoryHits >= 3 && memPacket.memoryPages == 1, "memory: age, page count and redaction count")
+        check(memPacket.withMemory(secret).memoryHits == memPacket.memoryHits, "memory: refreshing doesn't double-count hidden items")
         check(memPacket.firstMessage(content, question: "q", imagesAllowed: false).text.contains("[CARD]"),
-              "memory: first message carries the redacted snippets")
+              "memory: first message carries the redacted memory")
         let memSent: String = {
             let recorder = RecordingProvider()
             let done = DispatchSemaphore(value: 0)
